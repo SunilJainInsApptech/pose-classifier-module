@@ -1,0 +1,30 @@
+{
+  "$schema": "https://dl.viam.dev/module.schema.json",
+  "module_id": "rig-guardian:pose-classifier",
+  "visibility": "private",
+  "url": "",
+  "description": "Pose classification service with fall detection and alerts",
+  "models": [
+    {
+      "api": "rdk:service:generic",
+      "model": "rig-guardian:pose-classifier:pose-classifier",
+      "short_description": "ML-based pose classification service for fall detection and alerts",
+      "markdown_link": "README.md#model-rig-guardianpose-classifierpose-classifier"
+    }
+  ],
+  "applications": null,
+  "markdown_link": "README.md",
+  "entrypoint": "./run.sh",
+  "first_run": "",
+  "build": {
+    "build": "./build.sh",
+    "setup": "./setup.sh",
+    "path": "dist/archive.tar.gz",
+    "arch": [
+      "linux/amd64",
+      "linux/arm64",
+      "darwin/arm64",
+      "windows/amd64"
+    ]
+  }
+}
