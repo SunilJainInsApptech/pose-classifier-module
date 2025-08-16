@@ -80,7 +80,12 @@ async def main():
     LOGGER.info("Loaded pose classifier.")
 
     LOGGER.info("Connecting to robot...")
-    robot = await RobotClient.at_address(ROBOT_ADDRESS, ROBOT_OPTIONS)
+    options = RobotClient.Options(
+        api_key="YOUR_API_KEY",
+        api_key_id="YOUR_API_KEY_ID",
+        tls=True  # or False if not using TLS
+    )
+    robot = await RobotClient.at_address(ROBOT_ADDRESS, options)
     LOGGER.info("Connected to robot.")
 
     # Get ML model
