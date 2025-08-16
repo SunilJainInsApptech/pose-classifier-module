@@ -64,17 +64,58 @@ def preprocess_image(image):
     return img
 
 # --- POSTPROCESSING ---
-def process_yolo_pose_outputs(outputs, confidence_threshold=0.3):
-    LOGGER.debug("Post-processing model outputs...")
-    # Use the actual output key from the model
-    raw_output = outputs["location"]  # e.g., shape (N, 6+17*3)
-    LOGGER.debug(f"raw_output shape: {raw_output.shape}, dtype: {raw_output.dtype}")
-    LOGGER.debug(f"raw_output sample: {raw_output.flatten()[:20]}")
-    obj_confidence = raw_output[0, 4, :]
-    LOGGER.debug(f"obj_confidence shape: {obj_confidence.shape}, sample: {obj_confidence[:20]}")
-    # (rest of your post-processing logic will need to be updated after inspecting this output)
-    # For now, return empty results to avoid errors
-    return [], []
+def process_yolo_pose_outputs(outputs, confidence_threshold=0.3, iou_threshold=0.45):
+    LOGGER.debug("Post-processing model outputs with NMS...")
+    raw_output = outputs["location"]  # shape: (1, 56, 8400)
+    raw_output = np.squeeze(raw_output, axis=0)  # shape: (56, 8400)
+    boxes = raw_output[0:4, :].T  # (8400, 4) x, y, w, h
+    obj_conf = raw_output[4, :]   # (8400,)
+    # If class confidence exists, use it; else, set to 1
+    if raw_output.shape[0] > 5:
+        class_conf = raw_output[5, :]
+    else:
+        class_conf = np.ones_like(obj_conf)
+    scores = obj_conf * class_conf
+    keypoints = raw_output[6:, :].T  # (8400, N_keypoints)
+
+    # Filter by confidence threshold
+    mask = scores > confidence_threshold
+    boxes = boxes[mask]
+    scores = scores[mask]
+    keypoints = keypoints[mask]
+    if boxes.shape[0] == 0:
+        return [], []
+
+    # Convert [x, y, w, h] to [x1, y1, x2, y2]
+    boxes_xyxy = np.zeros_like(boxes)
+    boxes_xyxy[:, 0] = boxes[:, 0] - boxes[:, 2] / 2  # x1
+    boxes_xyxy[:, 1] = boxes[:, 1] - boxes[:, 3] / 2  # y1
+    boxes_xyxy[:, 2] = boxes[:, 0] + boxes[:, 2] / 2  # x2
+    boxes_xyxy[:, 3] = boxes[:, 1] + boxes[:, 3] / 2  # y2
+
+    # NMS using OpenCV
+    indices = cv2.dnn.NMSBoxes(
+        bboxes=boxes_xyxy.tolist(),
+        scores=scores.tolist(),
+        score_threshold=confidence_threshold,
+        nms_threshold=iou_threshold
+    )
+    if len(indices) == 0:
+        return [], []
+    indices = np.array(indices).flatten()
+
+    detections = []
+    keypoints_list = []
+    for idx in indices:
+        detection = {
+            "bbox": boxes_xyxy[idx].tolist(),
+            "confidence": float(scores[idx]),
+            "keypoints": keypoints[idx].reshape(-1, 3).tolist() if keypoints.shape[1] % 3 == 0 else keypoints[idx].tolist()
+        }
+        detections.append(detection)
+        keypoints_list.append(detection["keypoints"])
+    LOGGER.debug(f"Total detections after NMS: {len(detections)}")
+    return detections, keypoints_list
 
 # --- POSE CLASSIFICATION ---
 def classify_pose(pose_classifier, keypoints):
