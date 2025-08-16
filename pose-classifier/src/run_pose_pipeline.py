@@ -93,7 +93,7 @@ async def main():
 
     # Dynamically get camera dependencies from robot
     LOGGER.info(f"All resources: {robot.resource_names}")
-    camera_names = [res.name for res in robot.resource_names if getattr(res, "resource_type", "") == "camera"]
+    camera_names = [res.name for res in robot.resource_names if getattr(res, "resource_type", "") == "component" and getattr(res, "subtype", "") == "camera"]
     LOGGER.info(f"Found camera dependencies: {camera_names}")
     if not camera_names:
         LOGGER.warning("No camera dependencies found in robot config.")
