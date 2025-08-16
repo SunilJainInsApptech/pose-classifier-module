@@ -17,11 +17,8 @@ from viam.components.camera import Camera
 
 # --- CONFIGURATION ---
 ROBOT_ADDRESS = "camerasystemnvidia-main.niccosz288.viam.cloud"  # Replace with your robot address
-ROBOT_OPTIONS = {
-    "api_key": "qj8qcg0093x28jtoi90cs5inashvjnd8",
-    "api_key_id": "db33ed99-42fe-46e4-a403-d9af6729dd2b",
-    "tls": True  # or False, depending on your setup
-}  # Add your connection options
+ROBOT_API_KEY = "qj8qcg0093x28jtoi90cs5inashvjnd8"
+ROBOT_API_KEY_ID = "db33ed99-42fe-46e4-a403-d9af6729dd2b"
 
 TRITON_SERVICE_NAME = "pose-estimate"  # Replace with your ML model service name
 POSE_CLASSIFIER_PATH = "../pose_classifier.joblib"  # Adjust path if needed
@@ -29,6 +26,14 @@ POSE_CLASSIFIER_PATH = "../pose_classifier.joblib"  # Adjust path if needed
 # Setup logging
 logging.basicConfig(level=logging.DEBUG)
 LOGGER = logging.getLogger(__name__)
+
+# --- CONNECTION ---
+async def connect():
+    opts = RobotClient.Options.with_api_key(
+        api_key=ROBOT_API_KEY,
+        api_key_id=ROBOT_API_KEY_ID
+    )
+    return await RobotClient.at_address(ROBOT_ADDRESS, opts)
 
 # --- PREPROCESSING ---
 def preprocess_image(image):
@@ -75,18 +80,13 @@ def classify_pose(pose_classifier, keypoints):
 
 # --- MAIN PIPELINE ---
 async def main():
+    LOGGER.info("Connecting to robot...")
+    robot = await connect()
+    LOGGER.info("Connected to robot.")
+
     LOGGER.info("Loading pose classifier...")
     pose_classifier = joblib.load(POSE_CLASSIFIER_PATH)
     LOGGER.info("Loaded pose classifier.")
-
-    LOGGER.info("Connecting to robot...")
-    options = RobotClient.Options(
-        api_key="YOUR_API_KEY",
-        api_key_id="YOUR_API_KEY_ID",
-        tls=True  # or False if not using TLS
-    )
-    robot = await RobotClient.at_address(ROBOT_ADDRESS, options)
-    LOGGER.info("Connected to robot.")
 
     # Get ML model
     ml_model = MLModelClient.from_robot(robot, TRITON_SERVICE_NAME)
