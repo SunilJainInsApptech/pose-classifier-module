@@ -68,23 +68,13 @@ def process_yolo_pose_outputs(outputs, confidence_threshold=0.3):
     LOGGER.debug("Post-processing model outputs...")
     # Use the actual output key from the model
     raw_output = outputs["location"]  # e.g., shape (N, 6+17*3)
-    boxes = raw_output[:, :4]
-    obj_confidence = raw_output[:, 4]
-    keypoints = raw_output[:, 6:]
-    detections = []
-    keypoints_list = []
-    for i, box in enumerate(boxes):
-        LOGGER.debug(f"Detection {i}: confidence={obj_confidence[i]}")
-        if obj_confidence[i] > confidence_threshold:
-            detection = {
-                "bbox": box.tolist(),
-                "confidence": float(obj_confidence[i]),
-                "keypoints": keypoints[i].reshape(-1, 3).tolist()
-            }
-            detections.append(detection)
-            keypoints_list.append(keypoints[i].reshape(-1, 3).tolist())
-    LOGGER.debug(f"Total detections above threshold: {len(detections)}")
-    return detections, keypoints_list
+    LOGGER.debug(f"raw_output shape: {raw_output.shape}, dtype: {raw_output.dtype}")
+    LOGGER.debug(f"raw_output sample: {raw_output.flatten()[:20]}")
+    obj_confidence = raw_output[0, 4, :]
+    LOGGER.debug(f"obj_confidence shape: {obj_confidence.shape}, sample: {obj_confidence[:20]}")
+    # (rest of your post-processing logic will need to be updated after inspecting this output)
+    # For now, return empty results to avoid errors
+    return [], []
 
 # --- POSE CLASSIFICATION ---
 def classify_pose(pose_classifier, keypoints):
