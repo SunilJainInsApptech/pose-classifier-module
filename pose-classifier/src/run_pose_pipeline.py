@@ -92,13 +92,13 @@ async def main():
     ml_model = MLModelClient.from_robot(robot, TRITON_SERVICE_NAME)
 
     # Dynamically get camera dependencies from robot
-    camera_names = [res.name for res in robot.resource_names if res.namespace == "rdk" and res.resource_type == "camera"]
+    LOGGER.info(f"All resources: {robot.resource_names}")
+    camera_names = [name for name in robot.resource_names if "camera" in name.lower() or "CPW" in name or "Lobby" in name or "camera-" in name]
+    LOGGER.info(f"Found camera dependencies: {camera_names}")
     if not camera_names:
         LOGGER.warning("No camera dependencies found in robot config.")
         await robot.close()
         return
-
-    LOGGER.info(f"Found camera dependencies: {camera_names}")
 
     for camera_name in camera_names:
         LOGGER.info(f"Processing camera: {camera_name}")
