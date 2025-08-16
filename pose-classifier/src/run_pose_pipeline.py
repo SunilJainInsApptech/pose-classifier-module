@@ -66,8 +66,8 @@ def preprocess_image(image):
 # --- POSTPROCESSING ---
 def process_yolo_pose_outputs(outputs, confidence_threshold=0.3):
     LOGGER.debug("Post-processing model outputs...")
-    # TODO: Update 'output_tensor_name' to match your Triton model's output
-    raw_output = outputs["output_tensor_name"]  # e.g., shape (N, 6+17*3)
+    # Use the actual output key from the model
+    raw_output = outputs["location"]  # e.g., shape (N, 6+17*3)
     boxes = raw_output[:, :4]
     obj_confidence = raw_output[:, 4]
     keypoints = raw_output[:, 6:]
@@ -130,7 +130,8 @@ async def main():
         try:
             output_tensors = await ml_model.infer(input_tensors)
             LOGGER.info("Inference complete.")
-            LOGGER.info(f"ML model output keys: {list(output_tensors.keys())}")
+            for k, v in output_tensors.items():
+                LOGGER.info(f"Output key: {k}, shape: {getattr(v, 'shape', type(v))}, dtype: {getattr(v, 'dtype', type(v))}")
         except Exception as e:
             LOGGER.error(f"Error during inference for camera {camera_name}: {e}")
             continue
