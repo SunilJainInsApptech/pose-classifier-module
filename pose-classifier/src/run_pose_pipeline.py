@@ -130,6 +130,7 @@ async def main():
         try:
             output_tensors = await ml_model.infer(input_tensors)
             LOGGER.info("Inference complete.")
+            LOGGER.info(f"ML model output keys: {list(output_tensors.keys())}")
         except Exception as e:
             LOGGER.error(f"Error during inference for camera {camera_name}: {e}")
             continue
