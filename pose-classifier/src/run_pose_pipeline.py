@@ -11,9 +11,12 @@ import asyncio
 import joblib
 import numpy as np
 import logging
+import cv2
 from viam.robot.client import RobotClient
 from viam.services.mlmodel import MLModelClient
 from viam.components.camera import Camera
+from viam.media.video import ViamImage
+import io
 
 # --- CONFIGURATION ---
 ROBOT_ADDRESS = "camerasystemnvidia-main.niccosz288.viam.cloud"  # Replace with your robot address
@@ -38,10 +41,27 @@ async def connect():
 # --- PREPROCESSING ---
 def preprocess_image(image):
     LOGGER.debug("Preprocessing image for model input...")
-    # TODO: Implement preprocessing to match your YOLOv8n-pose model's input
-    # For example, resize, normalize, convert to numpy array, etc.
-    # Return a numpy array or dict as required by your Triton model
-    raise NotImplementedError("Implement image preprocessing for your model")
+    # Convert ViamImage to numpy array (assuming image is ViamImage or bytes)
+    if hasattr(image, 'data'):
+        img_bytes = image.data
+    else:
+        img_bytes = image  # fallback if already bytes
+    img_array = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("Failed to decode image")
+    # Resize to 640x640
+    img = cv2.resize(img, (640, 640))
+    # Convert BGR to RGB
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    # Normalize to [0, 1]
+    img = img.astype(np.float32) / 255.0
+    # Change shape to [3, 640, 640]
+    img = np.transpose(img, (2, 0, 1))
+    # Add batch dimension [1, 3, 640, 640]
+    img = np.expand_dims(img, axis=0)
+    # Triton may expect a dict with the input name as key
+    return img
 
 # --- POSTPROCESSING ---
 def process_yolo_pose_outputs(outputs, confidence_threshold=0.3):
