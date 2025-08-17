@@ -107,10 +107,23 @@ def process_yolo_pose_outputs(outputs, confidence_threshold=0.3, iou_threshold=0
     detections = []
     keypoints_list = []
     for idx in indices:
+        # Keypoints are either (N*3,) or (N,3) already, but sometimes flattening can cause issues
+        kps = keypoints[idx]
+        if isinstance(kps, float) or isinstance(kps, np.floating):
+            # Defensive: skip if keypoints are not an array
+            LOGGER.error(f"Detection {idx} has invalid keypoints: {kps}")
+            continue
+        if kps.ndim == 1 and kps.shape[0] % 3 == 0:
+            kps = kps.reshape(-1, 3)
+        elif kps.ndim == 2 and kps.shape[1] == 3:
+            pass  # already correct
+        else:
+            LOGGER.error(f"Detection {idx} has unexpected keypoints shape: {kps.shape}")
+            continue
         detection = {
             "bbox": boxes_xyxy[idx].tolist(),
             "confidence": float(scores[idx]),
-            "keypoints": keypoints[idx].reshape(-1, 3).tolist() if keypoints.shape[1] % 3 == 0 else keypoints[idx].tolist()
+            "keypoints": kps.tolist()
         }
         detections.append(detection)
         keypoints_list.append(detection["keypoints"])
