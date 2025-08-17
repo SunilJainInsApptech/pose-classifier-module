@@ -66,26 +66,24 @@ def preprocess_image(image):
 # --- POSTPROCESSING ---
 def process_yolo_pose_outputs(outputs, confidence_threshold=0.3, iou_threshold=0.45):
     LOGGER.debug("Post-processing model outputs with NMS...")
-    raw_output = outputs["location"]  # shape: (1, 56, 8400)
+    raw_output = outputs["location"]  # shape: (1, 56, 8400) or similar
     LOGGER.debug(f"raw_output.shape: {raw_output.shape}")
-    raw_output = np.squeeze(raw_output, axis=0)  # shape: (56, 8400)
+    raw_output = np.squeeze(raw_output, axis=0)  # shape: (C, 8400)
     LOGGER.debug(f"raw_output.shape after squeeze: {raw_output.shape}")
-    LOGGER.debug(f"First 10 values of first detection: {raw_output[:,0][:10]}")
-    LOGGER.debug(f"Total channels (should be 6 + N*3): {raw_output.shape[0]}")
+    # Print the first detection's full channel vector for inspection
+    LOGGER.debug(f"First detection full channel vector: {raw_output[:,0]}")
+    # Print the number of channels and what that means for keypoints
     num_channels = raw_output.shape[0]
     num_keypoint_channels = num_channels - 6
+    LOGGER.info(f"Total channels: {num_channels}, keypoint channels: {num_keypoint_channels}")
     if num_keypoint_channels % 3 == 0:
         num_keypoints = num_keypoint_channels // 3
-        LOGGER.debug(f"Detected {num_keypoints} keypoints per detection.")
+        LOGGER.info(f"Detected {num_keypoints} keypoints per detection (from output tensor).")
     else:
         LOGGER.warning(f"Keypoint channel count {num_keypoint_channels} is not divisible by 3! Slicing to 48 for 16 keypoints.")
-    boxes = raw_output[0:4, :].T  # (8400, 4) x, y, w, h
-    obj_conf = raw_output[4, :]   # (8400,)
-    # If class confidence exists, use it; else, set to 1
-    if raw_output.shape[0] > 5:
-        class_conf = raw_output[5, :]
-    else:
-        class_conf = np.ones_like(obj_conf)
+    boxes = raw_output[0:4, :].T  # (N, 4)
+    obj_conf = raw_output[4, :]
+    class_conf = raw_output[5, :] if raw_output.shape[0] > 5 else np.ones_like(obj_conf)
     scores = obj_conf * class_conf
     keypoints = raw_output[6:, :].T  # (8400, 50)
     LOGGER.debug(f"keypoints.shape: {keypoints.shape}")
