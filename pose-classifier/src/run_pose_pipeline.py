@@ -67,7 +67,19 @@ def preprocess_image(image):
 def process_yolo_pose_outputs(outputs, confidence_threshold=0.3, iou_threshold=0.45):
     LOGGER.debug("Post-processing model outputs with NMS...")
     raw_output = outputs["location"]  # shape: (1, 56, 8400)
+    LOGGER.debug(f"raw_output.shape: {raw_output.shape}")
     raw_output = np.squeeze(raw_output, axis=0)  # shape: (56, 8400)
+    LOGGER.debug(f"raw_output.shape after squeeze: {raw_output.shape}")
+    LOGGER.debug(f"First 10 values of first detection: {raw_output[:,0][:10]}")
+    LOGGER.debug(f"Total channels (should be 6 + N*3): {raw_output.shape[0]}")
+    # Print the number of keypoint channels and what that means for N keypoints
+    num_channels = raw_output.shape[0]
+    num_keypoint_channels = num_channels - 6
+    if num_keypoint_channels % 3 == 0:
+        num_keypoints = num_keypoint_channels // 3
+        LOGGER.debug(f"Detected {num_keypoints} keypoints per detection.")
+    else:
+        LOGGER.warning(f"Keypoint channel count {num_keypoint_channels} is not divisible by 3!")
     boxes = raw_output[0:4, :].T  # (8400, 4) x, y, w, h
     obj_conf = raw_output[4, :]   # (8400,)
     # If class confidence exists, use it; else, set to 1
@@ -77,6 +89,9 @@ def process_yolo_pose_outputs(outputs, confidence_threshold=0.3, iou_threshold=0
         class_conf = np.ones_like(obj_conf)
     scores = obj_conf * class_conf
     keypoints = raw_output[6:, :].T  # (8400, N_keypoints)
+    LOGGER.debug(f"keypoints.shape: {keypoints.shape}")
+    if keypoints.shape[1] > 0:
+        LOGGER.debug(f"First 10 keypoint values of first detection: {keypoints[0][:10]}")
 
     # Filter by confidence threshold
     mask = scores > confidence_threshold
@@ -107,12 +122,12 @@ def process_yolo_pose_outputs(outputs, confidence_threshold=0.3, iou_threshold=0
     detections = []
     keypoints_list = []
     for idx in indices:
-        # Keypoints are either (N*3,) or (N,3) already, but sometimes flattening can cause issues
         kps = keypoints[idx]
         if isinstance(kps, float) or isinstance(kps, np.floating):
-            # Defensive: skip if keypoints are not an array
             LOGGER.error(f"Detection {idx} has invalid keypoints: {kps}")
             continue
+        # Log the shape and first few values for debugging
+        LOGGER.debug(f"Detection {idx} keypoints shape: {kps.shape}, first 10 values: {kps[:10]}")
         if kps.ndim == 1 and kps.shape[0] % 3 == 0:
             kps = kps.reshape(-1, 3)
         elif kps.ndim == 2 and kps.shape[1] == 3:
