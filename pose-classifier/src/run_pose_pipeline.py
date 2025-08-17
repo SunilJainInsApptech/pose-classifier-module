@@ -147,6 +147,8 @@ def process_yolo_pose_outputs(outputs, confidence_threshold=0.3, iou_threshold=0
 
 # --- POSE CLASSIFICATION ---
 def classify_pose(pose_classifier, keypoints):
+    # Use only the first 13 keypoints for classification
+    keypoints = keypoints[:13]
     features = []
     for kp in keypoints:
         features.extend([kp[0], kp[1]])
