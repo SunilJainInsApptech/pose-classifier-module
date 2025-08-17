@@ -146,13 +146,14 @@ def process_yolo_pose_outputs(outputs, confidence_threshold=0.3, iou_threshold=0
     return detections, keypoints_list
 
 # --- POSE CLASSIFICATION ---
-def classify_pose(pose_classifier, keypoints):
-    # Use only the first 13 keypoints for classification
-    keypoints = keypoints[:13]
-    features = []
-    for kp in keypoints:
-        features.extend([kp[0], kp[1]])
-    LOGGER.debug(f"Classifying pose with features: {features}")
+def classify_pose(pose_classifier, keypoints, frame_width, frame_height):
+    # keypoints: (N, 2) array, N should be 17
+    if keypoints is None or len(keypoints) < 17:
+        LOGGER.warning("Not enough keypoints for classification.")
+        return "unknown"
+    keypoints_np = np.array(keypoints[:17])  # Ensure shape (17, 2)
+    normalized_keypoints = keypoints_np / np.array([frame_width, frame_height])
+    features = normalized_keypoints.flatten()
     pose_probs = pose_classifier.predict_proba([features])[0]
     pose_classes = pose_classifier.classes_
     result = {class_name: float(prob) for class_name, prob in zip(pose_classes, pose_probs)}
@@ -206,7 +207,9 @@ async def main():
 
         for i, keypoints in enumerate(keypoints_list):
             try:
-                pose_result = classify_pose(pose_classifier, keypoints)
+                # Get frame dimensions from the preprocessed image (should be 640x640)
+                frame_width, frame_height = 640, 640
+                pose_result = classify_pose(pose_classifier, keypoints, frame_width, frame_height)
                 LOGGER.info(f"Camera {camera_name} - Detection {i}: {pose_result}")
             except Exception as e:
                 LOGGER.error(f"Error classifying pose for camera {camera_name}, detection {i}: {e}")
