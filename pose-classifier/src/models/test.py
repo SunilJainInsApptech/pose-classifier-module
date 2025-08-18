@@ -24,15 +24,14 @@ img = np.zeros((640, 640, 3), dtype=np.uint8)  # Dummy image
 results = model(img)
 output = results[0].keypoints.xy
 print("Output shape:", output.shape)
-    
-    # Access the raw output tensor (logits)
+
+# Access the raw output tensor (logits)
 if hasattr(results, 'raw') and results.raw is not None:
-        output = results.raw
-        print("Raw output shape:", output.shape)
-        if len(output.shape) >= 2:
-            print("Number of channels:", output.shape[1])
-        else:
-            print("Output tensor does not have expected shape.")
+    output = results.raw
+    print("Raw output shape:", output.shape)
+    if len(output.shape) >= 2:
+        print("Number of channels:", output.shape[1])
     else:
-        # Fallback: try to access the tensor from the model directly (for advanced users)
-        print("Raw output not available in results. Check model export or use ONNX/TorchScript for direct tensor access.")
+        print("Output tensor does not have expected shape.")
+else:
+    print("Raw output not available in results. Check model export or use ONNX/TorchScript for direct tensor access.")
