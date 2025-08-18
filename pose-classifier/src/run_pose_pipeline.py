@@ -66,7 +66,7 @@ def preprocess_image(image):
 # --- POSTPROCESSING ---
 def process_yolo_pose_outputs(outputs, confidence_threshold=0.3, iou_threshold=0.45):
     LOGGER.debug("Post-processing model outputs with NMS...")
-    raw_output = outputs["location"]  # shape: (1, 57, 8400) expected for 17 keypoints
+    raw_output = outputs["keypoints"]  # shape: (1, 57, 8400) expected for 17 keypoints
     LOGGER.debug(f"raw_output.shape: {raw_output.shape}")
     raw_output = np.squeeze(raw_output, axis=0)  # shape: (C, 8400)
     LOGGER.debug(f"raw_output.shape after squeeze: {raw_output.shape}")
