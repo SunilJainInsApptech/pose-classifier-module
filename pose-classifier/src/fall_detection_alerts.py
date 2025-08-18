@@ -551,7 +551,7 @@ class FallDetectionAlerts:
                             "person_id": person_id,
                             "confidence": f"{confidence:.3f}",
                             "event_type": "fall_detected",
-                            "vision_service": "yolov8n-pose"
+                            "vision_service": "yolo11n-pose"
                         }
                     )
                     
@@ -614,7 +614,7 @@ class FallDetectionAlerts:
                     "person_id": person_id,
                     "confidence": f"{confidence:.3f}",
                     "event_type": "fall_detected",
-                    "vision_service": "yolov8n-pose"
+                    "vision_service": "yolo11n-pose"
                 }
             }
             

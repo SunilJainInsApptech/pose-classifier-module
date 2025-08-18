@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 # Load the model
-model = YOLO('yolov8n-pose.pt')
+model = YOLO('yolo11n-pose.pt')
 
 # Print model keypoint names and config
 print(model.model.names)  # Should show keypoint names if available

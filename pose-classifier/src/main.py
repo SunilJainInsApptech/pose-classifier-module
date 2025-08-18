@@ -24,7 +24,7 @@ LOGGER = logging.getLogger(__name__)
 
 class PoseClassifierService(Generic):
     """
-    Pose Classification Service that processes YOLOv8 detections
+    Pose Classification Service that processes YOLO11 detections
     and triggers fall alerts per camera configuration
     """
     
@@ -83,7 +83,7 @@ class PoseClassifierService(Generic):
         Handle pose classification commands from smart cameras
         
         Commands:
-        - classify_poses: Classify poses from YOLOv8 detections
+        - classify_poses: Classify poses from YOLO11 detections
         - register_camera: Register a camera for fall detection
         - get_status: Get service status
         """
@@ -99,7 +99,7 @@ class PoseClassifierService(Generic):
             return {"error": f"Unknown command: {cmd}"}
     
     async def _classify_poses(self, command: Dict[str, Any]) -> Dict[str, Any]:
-        """Classify poses from YOLOv8 detections"""
+        """Classify poses from YOLO11 detections"""
         try:
             camera_name = command.get("camera_name")
             detections = command.get("detections", [])
@@ -116,7 +116,7 @@ class PoseClassifierService(Generic):
             
             # Process each detection
             for detection in detections:
-                # Extract pose keypoints (assuming YOLOv8-pose format)
+                # Extract pose keypoints (assuming YOLO11-pose format)
                 keypoints = detection.get("keypoints", [])
                 if not keypoints:
                     continue
@@ -216,11 +216,11 @@ class PoseClassifierService(Generic):
     
     def _extract_pose_features(self, keypoints: List[List[float]]) -> Optional[List[float]]:
         """
-        Extract pose features from YOLOv8 keypoints
+        Extract pose features from YOLO11 keypoints
         This should match your existing pose feature extraction logic
         """
         try:
-            # YOLOv8-pose returns 17 keypoints with (x, y, confidence)
+            # YOLO11-pose returns 17 keypoints with (x, y, confidence)
             if len(keypoints) < 17:
                 return None
             

@@ -2,7 +2,7 @@
 Standalone script to test the full pose pipeline:
 - Connects to Viam robot
 - Captures image from camera
-- Runs inference on Triton ML model (YOLOv8n-pose)
+- Runs inference on Triton ML model (YOLO11n-pose)
 - Post-processes outputs to extract keypoints
 - Runs pose classification using existing joblib model
 """
@@ -187,8 +187,12 @@ async def main():
         try:
             output_tensors = await ml_model.infer(input_tensors)
             LOGGER.info("Inference complete.")
+            # --- Debugging: Log output tensor info ---
             for k, v in output_tensors.items():
                 LOGGER.info(f"Output key: {k}, shape: {getattr(v, 'shape', type(v))}, dtype: {getattr(v, 'dtype', type(v))}")
+                if hasattr(v, 'shape') and len(v.shape) >= 2:
+                    LOGGER.info(f"Number of channels in '{k}': {v.shape[1]}")
+            LOGGER.info(f"Tensor mappings: {list(output_tensors.keys())}")
         except Exception as e:
             LOGGER.error(f"Error during inference for camera {camera_name}: {e}")
             continue
