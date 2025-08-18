@@ -78,7 +78,8 @@ def process_yolo_pose_outputs(outputs, confidence_threshold=0.3, iou_threshold=0
         num_keypoints = num_keypoint_channels // 3
         LOGGER.info(f"Detected {num_keypoints} keypoints per detection (from output tensor).")
     else:
-        LOGGER.warning(f"Keypoint channel count {num_keypoint_channels} is not divisible by 3!")
+        LOGGER.error(f"Keypoint channel count {num_keypoint_channels} is not divisible by 3! Model export or config is incorrect. Post-processing will not proceed.")
+        return [], []
     # --- Keypoint extraction ---
     boxes = raw_output[0:4, :].T  # (N, 4)
     obj_conf = raw_output[4, :]
