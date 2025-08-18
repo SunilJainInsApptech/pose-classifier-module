@@ -26,7 +26,7 @@ output = results[0].keypoints.xy
 print("Output shape:", output.shape)
     
     # Access the raw output tensor (logits)
-    if hasattr(results, 'raw') and results.raw is not None:
+if hasattr(results, 'raw') and results.raw is not None:
         output = results.raw
         print("Raw output shape:", output.shape)
         if len(output.shape) >= 2:
