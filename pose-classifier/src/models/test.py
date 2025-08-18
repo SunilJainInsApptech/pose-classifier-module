@@ -1,5 +1,9 @@
 import torch
 import numpy as np
+from ultralytics import YOLO
+
+model = YOLO('/home/sunil/pose-classifier-module/pose-classifier/src/yolo11n-pose.pt')
+print(model.model.yaml)  # Look for 'kpt_shape'
 
 # Load the PyTorch model directly (not TorchScript)
 model = torch.load('/home/sunil/pose-classifier-module/pose-classifier/src/yolo11n-pose.pt', map_location='cpu')
@@ -16,11 +20,9 @@ with torch.no_grad():
         print("Number of channels:", output.shape[1])
     else:
         print("Output tensor does not have expected shape.")
-import torch
 model = torch.jit.load('/home/sunil/pose-classifier-module/pose-classifier/src/model.pt')
 model.eval()
 
-import numpy as np
 input_tensor = torch.from_numpy(np.zeros((1, 3, 640, 640), dtype=np.float32))
 with torch.no_grad():
     output = model(input_tensor)
