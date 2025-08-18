@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 # Load the model
-model = YOLO('yolo11n-pose.pt')
+model = YOLO('/home/sunil/pose-classifier-module/pose-classifier/src/yolo11n-pose.pt')
 
 # Print model keypoint names and config
 print(model.model.names)  # Should show keypoint names if available
