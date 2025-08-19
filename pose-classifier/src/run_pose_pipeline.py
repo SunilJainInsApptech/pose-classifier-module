@@ -72,24 +72,37 @@ def process_yolo_pose_outputs(outputs, confidence_threshold=0.3, iou_threshold=0
     LOGGER.debug(f"raw_output.shape after squeeze: {raw_output.shape}")
     LOGGER.debug(f"First detection full channel vector: {raw_output[:,0]}")
     num_channels = raw_output.shape[0]
-    num_keypoint_channels = num_channels - 6
-    LOGGER.info(f"Total channels: {num_channels}, keypoint channels: {num_keypoint_channels}")
-    if num_keypoint_channels % 3 == 0:
-        num_keypoints = num_keypoint_channels // 3
-        LOGGER.info(f"Detected {num_keypoints} keypoints per detection (from output tensor).")
+
+    # For single-class pose models with 17 keypoints and 56 channels:
+    # 4 bbox + 1 obj_conf + 51 keypoints (17*3)
+    if num_channels == 56:
+        num_keypoints = 17
+        LOGGER.info(f"Detected {num_keypoints} keypoints per detection (from output tensor, 56 channels, single-class model).")
+        boxes = raw_output[0:4, :].T  # (N, 4)
+        obj_conf = raw_output[4, :]
+        scores = obj_conf  # No class_conf, single class
+        keypoints = raw_output[5:5+num_keypoints*3, :].T  # (N, 51)
+        LOGGER.debug(f"keypoints.shape: {keypoints.shape}")
+        if keypoints.shape[1] > 0:
+            LOGGER.debug(f"First 20 keypoint values of first detection: {keypoints[0][:20]}")
     else:
-        LOGGER.error(f"Keypoint channel count {num_keypoint_channels} is not divisible by 3! Model export or config is incorrect. Post-processing will not proceed.")
-        return [], []
-    # --- Keypoint extraction ---
-    boxes = raw_output[0:4, :].T  # (N, 4)
-    obj_conf = raw_output[4, :]
-    class_conf = raw_output[5, :] if raw_output.shape[0] > 5 else np.ones_like(obj_conf)
-    scores = obj_conf * class_conf
-    # For 17 keypoints, keypoints = raw_output[6:57, :].T  # (N, 51)
-    keypoints = raw_output[6:6+num_keypoints*3, :].T  # (N, num_keypoints*3)
-    LOGGER.debug(f"keypoints.shape: {keypoints.shape}")
-    if keypoints.shape[1] > 0:
-        LOGGER.debug(f"First 20 keypoint values of first detection: {keypoints[0][:20]}")
+        num_keypoint_channels = num_channels - 6
+        LOGGER.info(f"Total channels: {num_channels}, keypoint channels: {num_keypoint_channels}")
+        if num_keypoint_channels % 3 == 0:
+            num_keypoints = num_keypoint_channels // 3
+            LOGGER.info(f"Detected {num_keypoints} keypoints per detection (from output tensor).")
+        else:
+            LOGGER.error(f"Keypoint channel count {num_keypoint_channels} is not divisible by 3! Model export or config is incorrect. Post-processing will not proceed.")
+            return [], []
+        # --- Keypoint extraction ---
+        boxes = raw_output[0:4, :].T  # (N, 4)
+        obj_conf = raw_output[4, :]
+        class_conf = raw_output[5, :] if raw_output.shape[0] > 5 else np.ones_like(obj_conf)
+        scores = obj_conf * class_conf
+        keypoints = raw_output[6:6+num_keypoints*3, :].T  # (N, num_keypoints*3)
+        LOGGER.debug(f"keypoints.shape: {keypoints.shape}")
+        if keypoints.shape[1] > 0:
+            LOGGER.debug(f"First 20 keypoint values of first detection: {keypoints[0][:20]}")
 
     # Filter by confidence threshold
     mask = scores > confidence_threshold
