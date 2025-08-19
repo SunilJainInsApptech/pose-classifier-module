@@ -160,7 +160,7 @@ def classify_pose(pose_classifier, keypoints, frame_width, frame_height):
     if keypoints is None or len(keypoints) < 17:
         LOGGER.warning("Not enough keypoints for classification.")
         return "unknown"
-    keypoints_np = np.array(keypoints[:17])  # Ensure shape (17, 2)
+    keypoints_np = np.array(keypoints[:17])[:, :2]  # Use only x, y for each keypoint
     normalized_keypoints = keypoints_np / np.array([frame_width, frame_height])
     features = normalized_keypoints.flatten()
     pose_probs = pose_classifier.predict_proba([features])[0]
@@ -200,6 +200,7 @@ async def main():
     USE_TEST_IMAGE = True  # Set to True to use a static image for testing
     TEST_IMAGE_PATH = "/home/sunil/pose-classifier-module/pose-classifier/camerasystemNVIDIA_training_camera_2025-07-06T20_53_12.274Z.jpg"  # Path to your test image
 
+    import json
     for camera_name in camera_names:
         LOGGER.info(f"Processing camera: {camera_name}")
         if USE_TEST_IMAGE:
@@ -242,6 +243,7 @@ async def main():
             LOGGER.error(f"Error in post-processing outputs for camera {camera_name}: {e}")
             continue
 
+        output_detections = []
         for i, keypoints in enumerate(keypoints_list):
             try:
                 # Get frame dimensions from the preprocessed image (should be 640x640)
@@ -250,7 +252,7 @@ async def main():
                 LOGGER.info(f"Camera {camera_name} - Detection {i}: {pose_result}")
                 # Example: if your classifier result indicates a fall, trigger alert
                 # Adjust the logic below to match your classifier's output structure
-                fall_confidence = pose_result.get('fallen', 0.0)
+                fall_confidence = pose_result.get('fallen', 0.0) if isinstance(pose_result, dict) else 0.0
                 if fall_confidence > 0.7:  # or your desired threshold
                     person_id = str(i)
                     # Optionally, pass metadata, data_manager, vision_service if available
@@ -262,8 +264,17 @@ async def main():
                         metadata={"probabilities": pose_result}
                     )
                     LOGGER.info(f"Fall detected for detection {i}, alert sent.")
+                # Add detection to output list for objectfilter-camera
+                output_detections.append({
+                    "label": "person",
+                    "confidence": detections[i]["confidence"],
+                    "bbox": detections[i]["bbox"],
+                    "keypoints": keypoints
+                })
             except Exception as e:
                 LOGGER.error(f"Error classifying pose for camera {camera_name}, detection {i}: {e}")
+        # Output all detections as JSON for objectfilter-camera
+        print(json.dumps(output_detections, indent=2))
 
     await robot.close()
 
