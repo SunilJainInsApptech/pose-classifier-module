@@ -163,11 +163,9 @@ def classify_pose(pose_classifier, keypoints, frame_width, frame_height):
     keypoints_np = np.array(keypoints[:17])[:, :2]  # Use only x, y for each keypoint
     normalized_keypoints = keypoints_np / np.array([frame_width, frame_height])
     features = normalized_keypoints.flatten()
-    pose_probs = pose_classifier.predict_proba([features])[0]
-    pose_classes = pose_classifier.classes_
-    result = {class_name: float(prob) for class_name, prob in zip(pose_classes, pose_probs)}
-    LOGGER.debug(f"Classification result: {result}")
-    return result
+    pose_label = pose_classifier.predict([features])[0]
+    LOGGER.debug(f"Predicted pose label: {pose_label}")
+    return {"label": pose_label}
 
 # --- MAIN PIPELINE ---
 async def main():
