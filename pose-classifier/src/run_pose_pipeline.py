@@ -164,6 +164,10 @@ def classify_pose(pose_classifier, keypoints, frame_width, frame_height):
     normalized_keypoints = keypoints_np / np.array([frame_width, frame_height])
     features = normalized_keypoints.flatten()
     pose_label = pose_classifier.predict([features])[0]
+    # Ensure label is a plain Python string for JSON serialization
+    if hasattr(pose_label, 'item'):
+        pose_label = pose_label.item()
+    pose_label = str(pose_label)
     LOGGER.debug(f"Predicted pose label: {pose_label}")
     return {"label": pose_label}
 
@@ -248,12 +252,13 @@ async def main():
                 frame_width, frame_height = 640, 640
                 pose_result = classify_pose(pose_classifier, keypoints, frame_width, frame_height)
                 LOGGER.info(f"Camera {camera_name} - Detection {i}: {pose_result}")
-                # Example: if your classifier result indicates a fall, trigger alert
-                # Adjust the logic below to match your classifier's output structure
-                fall_confidence = pose_result.get('fallen', 0.0) if isinstance(pose_result, dict) else 0.0
+                # If using label-only classifier, set fall_confidence based on label
+                if isinstance(pose_result, dict) and pose_result.get('label', '') == 'fallen':
+                    fall_confidence = 1.0
+                else:
+                    fall_confidence = 0.0
                 if fall_confidence > 0.7:  # or your desired threshold
                     person_id = str(i)
-                    # Optionally, pass metadata, data_manager, vision_service if available
                     await fall_alerts.send_fall_alert(
                         camera_name=camera_name,
                         person_id=person_id,
