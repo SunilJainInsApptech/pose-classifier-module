@@ -17,6 +17,7 @@ from viam.services.mlmodel import MLModelClient
 from viam.components.camera import Camera
 from viam.media.video import ViamImage
 import io
+from fall_detection_alerts import FallDetectionAlerts
 
 # --- CONFIGURATION ---
 ROBOT_ADDRESS = "camerasystemnvidia-main.niccosz288.viam.cloud"  # Replace with your robot address
@@ -185,6 +186,16 @@ async def main():
     camera_names = ["CPW_Awning_N_Facing"]  # <-- Set your camera name(s) here
     LOGGER.info(f"Using manual camera list: {camera_names}")
 
+    # Initialize fall detection alert service
+    fall_alerts = FallDetectionAlerts({
+        # Fill with your config or load from file/env
+        # 'twilio_account_sid': 'your_sid',
+        # 'twilio_auth_token': 'your_token',
+        # 'twilio_from_phone': '+1234567890',
+        # 'twilio_to_phones': ['+1987654321'],
+        # ...
+    })
+
     for camera_name in camera_names:
         LOGGER.info(f"Processing camera: {camera_name}")
         camera = Camera.from_robot(robot, camera_name)
@@ -223,6 +234,20 @@ async def main():
                 frame_width, frame_height = 640, 640
                 pose_result = classify_pose(pose_classifier, keypoints, frame_width, frame_height)
                 LOGGER.info(f"Camera {camera_name} - Detection {i}: {pose_result}")
+                # Example: if your classifier result indicates a fall, trigger alert
+                # Adjust the logic below to match your classifier's output structure
+                fall_confidence = pose_result.get('fallen', 0.0)
+                if fall_confidence > 0.7:  # or your desired threshold
+                    person_id = str(i)
+                    # Optionally, pass metadata, data_manager, vision_service if available
+                    await fall_alerts.send_fall_alert(
+                        camera_name=camera_name,
+                        person_id=person_id,
+                        confidence=fall_confidence,
+                        image=image,
+                        metadata={"probabilities": pose_result}
+                    )
+                    LOGGER.info(f"Fall detected for detection {i}, alert sent.")
             except Exception as e:
                 LOGGER.error(f"Error classifying pose for camera {camera_name}, detection {i}: {e}")
 
