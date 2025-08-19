@@ -196,11 +196,25 @@ async def main():
         # ...
     })
 
+    # --- TEST IMAGE MODE ---
+    USE_TEST_IMAGE = True  # Set to True to use a static image for testing
+    TEST_IMAGE_PATH = "/home/sunil/pose-classifier-module/pose-classifier/camerasystemNVIDIA_training_camera_2025-07-06T20_53_12.274Z.jpg"  # Path to your test image
+
     for camera_name in camera_names:
         LOGGER.info(f"Processing camera: {camera_name}")
-        camera = Camera.from_robot(robot, camera_name)
-        image = await camera.get_image()
-        LOGGER.info(f"Captured image from camera: {camera_name}")
+        if USE_TEST_IMAGE:
+            # Load test image from disk
+            img = cv2.imread(TEST_IMAGE_PATH)
+            if img is None:
+                LOGGER.error(f"Failed to load test image: {TEST_IMAGE_PATH}")
+                continue
+            _, img_bytes = cv2.imencode('.jpg', img)
+            image = ViamImage(data=img_bytes.tobytes())
+            LOGGER.info(f"Loaded test image from: {TEST_IMAGE_PATH}")
+        else:
+            camera = Camera.from_robot(robot, camera_name)
+            image = await camera.get_image()
+            LOGGER.info(f"Captured image from camera: {camera_name}")
 
         try:
             input_tensors = {"input": preprocess_image(image)}
