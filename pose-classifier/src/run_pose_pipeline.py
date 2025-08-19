@@ -209,7 +209,7 @@ async def main():
                 LOGGER.error(f"Failed to load test image: {TEST_IMAGE_PATH}")
                 continue
             _, img_bytes = cv2.imencode('.jpg', img)
-            image = ViamImage(data=img_bytes.tobytes())
+            image = ViamImage(data=img_bytes.tobytes(), mime_type='image/jpeg')
             LOGGER.info(f"Loaded test image from: {TEST_IMAGE_PATH}")
         else:
             camera = Camera.from_robot(robot, camera_name)
