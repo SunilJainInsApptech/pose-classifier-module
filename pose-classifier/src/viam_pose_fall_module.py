@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Viam Custom Module Template for Pose Classification and Fall Detection
 """
