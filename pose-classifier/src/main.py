@@ -243,8 +243,15 @@ class PoseClassifierService(Generic):
             LOGGER.error(f"❌ Feature extraction error: {e}")
             return None
 
-import asyncio
 from viam.module.module import Module
+from viam.resource.registry import Registry, ResourceCreatorRegistration
+from src.models.pose_classifier import PoseClassifier
 
 if __name__ == "__main__":
-    asyncio.run(Module.run_from_registry())
+    # Register the PoseClassifier resource creator for the Vision API
+    Registry.register_resource_creator(
+        PoseClassifier.API,
+        PoseClassifier.MODEL,
+        ResourceCreatorRegistration(PoseClassifier.new, PoseClassifier.validate_config)
+    )
+    Module.run()
