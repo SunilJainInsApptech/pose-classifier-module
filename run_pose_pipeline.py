@@ -209,7 +209,7 @@ async def main():
     })
 
     # --- TEST IMAGE MODE ---
-    USE_TEST_IMAGE = False  # Set to False to use the Viam camera
+    USE_TEST_IMAGE = True  # Set to False to use the Viam camera
     TEST_IMAGE_PATH = "/home/sunil/pose-classifier-module/pose-classifier/camerasystemNVIDIA_training_camera_2025-07-06T20_53_12.274Z.jpg"  # Path to your test image
 
     import json
