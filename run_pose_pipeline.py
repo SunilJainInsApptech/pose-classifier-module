@@ -25,7 +25,7 @@ ROBOT_API_KEY = "qj8qcg0093x28jtoi90cs5inashvjnd8"
 ROBOT_API_KEY_ID = "db33ed99-42fe-46e4-a403-d9af6729dd2b"
 
 TRITON_SERVICE_NAME = "pose-estimate"  # Replace with your ML model service name
-POSE_CLASSIFIER_PATH = "/home/sunil/pose-classifier-module/pose-classifier/pose_classifier.joblib"  # Adjust path if needed
+POSE_CLASSIFIER_PATH = "/home/sunil/pose-classifier-module/pose_classifier_svc.joblib"  # Adjust path if needed
 
 # Setup logging
 logging.basicConfig(level=logging.DEBUG)
