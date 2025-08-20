@@ -256,4 +256,5 @@ if __name__ == "__main__":
         PoseClassifierService.MODEL,
         ResourceCreatorRegistration(PoseClassifierService.new, PoseClassifierService.validate_config)
     )
-    Module.run()
+    import asyncio
+    asyncio.run(Module.run_from_registry())
