@@ -57,7 +57,7 @@ class PoseClassifierService(Generic):
             attributes = struct_to_dict(config.attributes)
             
             # Load pose classifier
-            pose_classifier_path = attributes.get("pose_classifier_path")
+            pose_classifier_path = attributes.get('pose_classifier_path', '/home/sunil/pose-classifier-module/pose-classifier/pose_classifier.joblib')
             if pose_classifier_path:
                 import joblib
                 self.pose_classifier = joblib.load(pose_classifier_path)
