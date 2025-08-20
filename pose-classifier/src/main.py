@@ -29,7 +29,7 @@ class PoseClassifierService(Generic):
     """
     # Use a unique API and model name for the custom service to avoid conflict with Vision API
     from viam.resource.types import API
-    API = API("rig-guardian:service:pose-classifier-svc")
+    API = API("rig-guardian","service","pose-classifier-svc")
     MODEL: Model = Model(ModelFamily("rig-guardian", "pose-classifier"), "pose-classifier-svc")
     
     def __init__(self, name: str):
