@@ -184,9 +184,19 @@ async def main():
     # Get ML model
     ml_model = MLModelClient.from_robot(robot, TRITON_SERVICE_NAME)
 
-    # --- MANUAL CAMERA NAME ---
-    camera_names = ["Lobby_Center_North"]  # <-- Set your camera name(s) here
-    LOGGER.info(f"Using manual camera list: {camera_names}")
+
+    # --- AUTOMATIC CAMERA DISCOVERY ---
+    def get_camera_names(robot):
+        camera_names = []
+        for resource_name in robot.resource_names:
+            if (resource_name.namespace == "rdk" and 
+                resource_name.type == "component" and 
+                resource_name.subtype == "camera"):
+                camera_names.append(resource_name.name)
+        return camera_names
+
+    camera_names = get_camera_names(robot)
+    LOGGER.info(f"Detected cameras: {camera_names}")
 
     # Initialize fall detection alert service
     fall_alerts = FallDetectionAlerts({
