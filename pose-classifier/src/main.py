@@ -245,18 +245,12 @@ class PoseClassifierService(Generic):
             LOGGER.error(f"❌ Feature extraction error: {e}")
             return None
 
+
 from viam.module.module import Module
 from viam.resource.registry import Registry, ResourceCreatorRegistration
-from src.models.pose_classifier import PoseClassifier
 
 if __name__ == "__main__":
-    # Register the Vision Service (Viam API)
-    Registry.register_resource_creator(
-        PoseClassifier.API,
-        PoseClassifier.MODEL,
-        ResourceCreatorRegistration(PoseClassifier.new, PoseClassifier.validate_config)
-    )
-    # Register the custom PoseClassifierService (custom API)
+    # Register only the custom PoseClassifierService (custom API)
     Registry.register_resource_creator(
         PoseClassifierService.API,
         PoseClassifierService.MODEL,

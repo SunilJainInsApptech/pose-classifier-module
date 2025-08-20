@@ -1,0 +1,7 @@
+{
+  "model": "pose-vision",
+  "name": "Pose Vision Service",
+  "description": "A Viam Vision Service module for pose classification.",
+  "entrypoint": "python3 src/main.py",
+  "version": "0.1.0"
+}

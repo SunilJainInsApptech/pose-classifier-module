@@ -1,0 +1,4 @@
+viam-sdk
+pydantic
+joblib
+scikit-learn
