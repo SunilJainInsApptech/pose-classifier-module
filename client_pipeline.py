@@ -16,9 +16,9 @@ async def connect() -> RobotClient:
     return await RobotClient.at_address(address, opts)
 
 async def process_camera(robot, camera_name):
+
     camera = Camera.from_robot(robot, camera_name)
     triton = VisionClient.from_robot(robot, triton_service)
-    pose_classifier = robot.resource_by_name(pose_classifier_service)
 
     while True:
         try:
@@ -38,7 +38,7 @@ async def process_camera(robot, camera_name):
                     "detections": [d.to_dict() for d in detections],
                     "image_data": img_b64
                 }
-                result = await pose_classifier.do_command(command)
+                result = await robot.do_command(pose_classifier_service, command)
                 print(f"[{camera_name}] Result: {result}")
         except Exception as e:
             print(f"[{camera_name}] Error: {e}")
