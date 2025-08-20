@@ -44,13 +44,14 @@ async def process_camera(robot, camera_name):
             print(f"[{camera_name}] Error: {e}")
         await asyncio.sleep(1)  # Adjust frame rate as needed
 
-async def get_camera_names(robot):
-    # Returns a list of all camera resource names using Camera.SUBTYPE
-    return [name.name for name in robot.resource_names_by_subtype(Camera.SUBTYPE)]
+def get_camera_names(robot):
+    # Returns a list of all camera resource names by filtering resource_names by subtype
+    return [name.name for name in robot.resource_names if name.subtype == Camera.SUBTYPE]
+
 
 async def main():
     robot = await connect()
-    camera_names = await get_camera_names(robot)
+    camera_names = get_camera_names(robot)
     print("Detected cameras:", camera_names)
     tasks = [process_camera(robot, cam) for cam in camera_names]
     await asyncio.gather(*tasks)
