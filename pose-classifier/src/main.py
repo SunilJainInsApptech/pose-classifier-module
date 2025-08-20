@@ -27,8 +27,10 @@ class PoseClassifierService(Generic):
     Pose Classification Service that processes YOLO11 detections
     and triggers fall alerts per camera configuration
     """
-    
-    MODEL: Model = Model(ModelFamily("rig-guardian", "pose-classifier"), "pose-classifier")
+    # Use a unique API and model name for the custom service to avoid conflict with Vision API
+    from viam.resource.types import API
+    API = API("rig-guardian:service:pose-classifier-svc")
+    MODEL: Model = Model(ModelFamily("rig-guardian", "pose-classifier"), "pose-classifier-svc")
     
     def __init__(self, name: str):
         super().__init__(name)
@@ -248,10 +250,16 @@ from viam.resource.registry import Registry, ResourceCreatorRegistration
 from src.models.pose_classifier import PoseClassifier
 
 if __name__ == "__main__":
-    # Register the PoseClassifier resource creator for the Vision API
+    # Register the Vision Service (Viam API)
     Registry.register_resource_creator(
         PoseClassifier.API,
         PoseClassifier.MODEL,
         ResourceCreatorRegistration(PoseClassifier.new, PoseClassifier.validate_config)
+    )
+    # Register the custom PoseClassifierService (custom API)
+    Registry.register_resource_creator(
+        PoseClassifierService.API,
+        PoseClassifierService.MODEL,
+        ResourceCreatorRegistration(PoseClassifierService.new, PoseClassifierService.validate_config)
     )
     Module.run()
