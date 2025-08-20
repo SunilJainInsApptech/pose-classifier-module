@@ -45,8 +45,14 @@ async def process_camera(robot, camera_name):
         await asyncio.sleep(1)  # Adjust frame rate as needed
 
 def get_camera_names(robot):
-    # Returns a list of all camera resource names by filtering resource_names by subtype
-    return [name.name for name in robot.resource_names if name.subtype == Camera.SUBTYPE]
+    # Returns a list of all camera component resource names (namespace='rdk', type='component', subtype='camera')
+    camera_names = []
+    for resource_name in robot.resource_names:
+        if (resource_name.namespace == "rdk" and 
+            resource_name.type == "component" and 
+            resource_name.subtype == "camera"):
+            camera_names.append(resource_name.name)
+    return camera_names
 
 
 async def main():
