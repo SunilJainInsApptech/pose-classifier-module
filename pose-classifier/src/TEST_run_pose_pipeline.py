@@ -185,7 +185,7 @@ async def main():
     ml_model = MLModelClient.from_robot(robot, TRITON_SERVICE_NAME)
 
     # --- MANUAL CAMERA NAME ---
-    camera_names = ["CPW_Awning_N_Facing"]  # <-- Set your camera name(s) here
+    camera_names = ["Lobby_Center_North"]  # <-- Set your camera name(s) here
     LOGGER.info(f"Using manual camera list: {camera_names}")
 
     # Initialize fall detection alert service
