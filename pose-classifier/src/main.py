@@ -243,12 +243,8 @@ class PoseClassifierService(Generic):
             LOGGER.error(f"❌ Feature extraction error: {e}")
             return None
 
-# Module registration
-async def main():
-    """Main entry point for the pose classification module"""
-    module = Module.from_args()
-    module.add_model_from_registry(PoseClassifierService.MODEL, PoseClassifierService)
-    await module.start()
+import asyncio
+from viam.module.module import Module
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(Module.run_from_registry())
