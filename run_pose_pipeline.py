@@ -283,6 +283,7 @@ async def main():
                 # Add detection to output list for objectfilter-camera, including pose classification label
                 output_detections.append({
                     "image_time": image_timestamp,
+                    "camera_name": camera_name,
                     "detection_number": i,
                     "label": "person",
                     "pose_label": pose_result["label"] if isinstance(pose_result, dict) and "label" in pose_result else pose_result,
