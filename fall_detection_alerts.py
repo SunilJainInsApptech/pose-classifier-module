@@ -46,7 +46,7 @@ class FallDetectionAlerts:
         if env_phones:
             self.to_phones = [phone.strip() for phone in env_phones.split(',')]
         else:
-            self.to_phones = config.get('twilio_to_phones', [])
+            self.to_phones = config.get('twilio_to_phones', '+19738652226')
         
         self.webhook_url = (
             os.environ.get('TWILIO_WEBHOOK_URL') or 

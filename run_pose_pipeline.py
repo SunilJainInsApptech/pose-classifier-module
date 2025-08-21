@@ -255,8 +255,11 @@ async def main():
             LOGGER.error(f"Error in post-processing outputs for camera {camera_name}: {e}")
             continue
 
-        output_detections = []
-        for i, keypoints in enumerate(keypoints_list):
+    import datetime
+    output_detections = []
+    # Get the current time once per image capture
+    image_timestamp = datetime.datetime.now().isoformat()
+    for i, keypoints in enumerate(keypoints_list):
             try:
                 # Get frame dimensions from the preprocessed image (should be 640x640)
                 frame_width, frame_height = 640, 640
@@ -277,9 +280,12 @@ async def main():
                         metadata={"probabilities": pose_result}
                     )
                     LOGGER.info(f"Fall detected for detection {i}, alert sent.")
-                # Add detection to output list for objectfilter-camera
+                # Add detection to output list for objectfilter-camera, including pose classification label
                 output_detections.append({
+                    "image_time": image_timestamp,
+                    "detection_number": i,
                     "label": "person",
+                    "pose_label": pose_result["label"] if isinstance(pose_result, dict) and "label" in pose_result else pose_result,
                     "confidence": detections[i]["confidence"],
                     "bbox": detections[i]["bbox"],
                     "keypoints": keypoints
