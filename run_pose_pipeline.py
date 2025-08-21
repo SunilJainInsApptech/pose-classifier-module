@@ -293,7 +293,7 @@ async def main():
             except Exception as e:
                 LOGGER.error(f"Error classifying pose for camera {camera_name}, detection {i}: {e}")
         # Output all detections as JSON for objectfilter-camera
-        print(json.dumps(output_detections, indent=2))
+    print(json.dumps(output_detections, indent=2))
 
     await robot.close()
 
