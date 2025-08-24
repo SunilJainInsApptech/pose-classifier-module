@@ -137,6 +137,7 @@ class FallDetectionAlerts:
     
     def format_alert_message(self, 
                            camera_name: str, 
+                           alert_type: str,
                            person_id: str, 
                            confidence: float,
                            timestamp: datetime,
@@ -168,6 +169,7 @@ class FallDetectionAlerts:
     
     async def send_fall_alert(self, 
                             camera_name: str,
+                            alert_type: str,
                             person_id: str, 
                             confidence: float,
                             image: ViamImage,
@@ -194,6 +196,7 @@ class FallDetectionAlerts:
             # Format alert message
             message = self.format_alert_message(
                 camera_name=camera_name,
+                alert_type="fall",  
                 person_id=person_id,
                 confidence=confidence,
                 timestamp=timestamp,
@@ -221,6 +224,7 @@ class FallDetectionAlerts:
             # Send push notification to rigguardian.com app
             push_success = await self.send_push_notification(
                 camera_name=camera_name,
+                alert_type="fall",
                 person_id=person_id,
                 confidence=confidence,
                 timestamp=timestamp,
@@ -242,36 +246,6 @@ class FallDetectionAlerts:
                 
         except Exception as e:
             LOGGER.error(f"❌ Error sending fall alert: {e}")
-            return False
-    
-    async def send_test_alert(self, camera_name: str = "test_camera") -> bool:
-        """Send a test alert to verify Twilio configuration"""
-        try:
-            message = f"🧪 TEST ALERT 🧪\n"
-            message += f"Fall detection system is active\n"
-            message += f"Camera: {camera_name}\n"
-            message += f"Time: {datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')}\n"
-            message += f"System is monitoring for falls."
-            
-            success_count = 0
-            for phone_number in self.to_phones:
-                try:
-                    message_obj = self.client.messages.create(
-                        body=message,
-                        from_=self.from_phone,
-                        to=phone_number
-                    )
-                    
-                    LOGGER.info(f"📱 Test alert sent to {phone_number}, SID: {message_obj.sid}")
-                    success_count += 1
-                    
-                except Exception as e:
-                    LOGGER.error(f"❌ Failed to send test SMS to {phone_number}: {e}")
-            
-            return success_count > 0
-            
-        except Exception as e:
-            LOGGER.error(f"❌ Error sending test alert: {e}")
             return False
     
     async def send_push_notification(self, camera_name: str, person_id: str, confidence: float, timestamp: datetime, metadata: Optional[Dict[str, Any]] = None, image: Optional[ViamImage] = None) -> bool:
@@ -557,7 +531,7 @@ class FallDetectionAlerts:
                         additional_metadata={
                             "person_id": person_id,
                             "confidence": f"{confidence:.3f}",
-                            "event_type": "fall_detected",
+                            "event_type": "fall",
                             "vision_service": "yolo11n-pose"
                         }
                     )
@@ -684,7 +658,7 @@ class FallDetectionAlerts:
                 "additional_metadata": {
                     "person_id": person_id,
                     "confidence": f"{confidence:.3f}",
-                    "event_type": "fall_detected",
+                    "event_type": "fall",
                     "vision_service": "yolo11n-pose"
                 }
             }

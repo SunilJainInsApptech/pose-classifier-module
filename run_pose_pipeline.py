@@ -15,9 +15,10 @@ import cv2
 from viam.robot.client import RobotClient
 from viam.services.mlmodel import MLModelClient
 from viam.components.camera import Camera
-from viam.media.video import ViamImage
+from viam.media.video import ViamImage # pyright: ignore[reportMissingImports]
 import io
 from fall_detection_alerts import FallDetectionAlerts
+from after_hours_alerts import AfterHoursAlerts
 
 # --- CONFIGURATION ---
 ROBOT_ADDRESS = "camerasystemnvidia-main.niccosz288.viam.cloud"  # Replace with your robot address
@@ -207,7 +208,19 @@ async def main():
         # 'twilio_to_phones': ['+1987654321'],
         # ...
     })
-
+"""
+    # Initialize after-hours alert service
+    after_hours_alerts = AfterHoursAlerts({
+        # Fill with your config or load from file/env
+        # 'twilio_account_sid': 'your_sid',
+        # 'twilio_auth_token': 'your_token',
+        # 'twilio_from_phone': '+1234567890',
+        # 'twilio_to_phones': ['+1987654321'],
+        # 'after_hours_start': '22:00',
+        # 'after_hours_end': '06:00',
+        # ...
+    })
+"""
     # --- TEST IMAGE MODE ---
     USE_TEST_IMAGE = False  # Set to False to use the Viam camera
     TEST_IMAGE_PATH = "/home/sunil/pose-classifier-module/pose-classifier/camerasystemNVIDIA_training_camera_2025-07-06T20_53_12.274Z.jpg"  # Path to your test image
@@ -298,6 +311,7 @@ async def main():
                 LOGGER.info(f"[Cooldown] Sending alert for {camera_name} (last alert {now - last_time:.2f}s ago)")
                 await fall_alerts.send_fall_alert(
                     camera_name=camera_name,
+                    alert_type="fall",
                     person_id=person_id,
                     confidence=pose_confidence,
                     image=image,
@@ -323,7 +337,24 @@ async def main():
             LOGGER.error(f"Error classifying pose for camera {camera_name}, detection {i}: {e}")
         # Output all detections as JSON for objectfilter-camera
     print(json.dumps(output_detections, indent=2))
-
+"""
+        # After pose classification and fall alert logic, check for after-hours person detection
+        # If any detection (person) exists, send after-hours alert if in after-hours window
+        if len(detections) > 0:
+            # Only send one after-hours alert per image/camera
+            await after_hours_alerts.send_after_hours_alert(
+                camera_name=camera_name,
+                image=image,
+                metadata={
+                    "detections": [
+                        {
+                            "bbox": det["bbox"],
+                            "confidence": det["confidence"]
+                        } for det in detections
+                    ]
+                }
+            )
+"""
     await robot.close()
 
 if __name__ == "__main__":
