@@ -271,11 +271,20 @@ async def main():
             frame_width, frame_height = 640, 640
             pose_result = classify_pose(pose_classifier, keypoints, frame_width, frame_height)
             LOGGER.info(f"Camera {camera_name} - Detection {i}: {pose_result}")
-            # If using label-only classifier, set fall_confidence based on label
-            if isinstance(pose_result, dict) and pose_result.get('label', '') == 'fallen':
-                fall_confidence = 1.0
+            # Extract pose classifier confidence if available, else fallback to 1.0 for 'fallen', 0.0 otherwise
+            if isinstance(pose_result, dict):
+                pose_label = pose_result.get('label', '')
+                pose_confidence_raw = pose_result.get('confidence', 1.0 if pose_label == 'fallen' else 0.0)
             else:
-                fall_confidence = 0.0
+                pose_label = pose_result
+                pose_confidence_raw = 1.0 if pose_label == 'fallen' else 0.0
+            # Ensure pose_confidence is always a float
+            try:
+                pose_confidence = float(pose_confidence_raw)
+            except Exception:
+                pose_confidence = 1.0 if pose_label == 'fallen' else 0.0
+            # For alert logic, treat 'fallen' as high confidence
+            fall_confidence = pose_confidence
 
             # --- Per-camera cooldown logic ---
             cooldown_seconds = 30
@@ -290,7 +299,7 @@ async def main():
                 await fall_alerts.send_fall_alert(
                     camera_name=camera_name,
                     person_id=person_id,
-                    confidence=detections[i]["confidence"],
+                    confidence=pose_confidence,
                     image=image,
                     metadata={"probabilities": pose_result}
                 )
@@ -305,8 +314,8 @@ async def main():
                 "camera_name": camera_name,
                 "detection_number": i,
                 "label": "person",
-                "pose_label": pose_result["label"] if isinstance(pose_result, dict) and "label" in pose_result else pose_result,
-                "confidence": detections[i]["confidence"],
+                "pose_label": pose_label,
+                "confidence": pose_confidence,
                 "bbox": detections[i]["bbox"],
                 "keypoints": keypoints
             })
