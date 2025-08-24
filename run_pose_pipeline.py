@@ -255,44 +255,63 @@ async def main():
             LOGGER.error(f"Error in post-processing outputs for camera {camera_name}: {e}")
             continue
 
+
     import datetime
+    import time
+    # --- Add cooldown tracking per camera (persist across main calls) ---
+    camera_last_fall_time = {}
     output_detections = []
     # Get the current time once per image capture
     image_timestamp = datetime.datetime.now().isoformat()
+
     for i, keypoints in enumerate(keypoints_list):
-            try:
-                # Get frame dimensions from the preprocessed image (should be 640x640)
-                frame_width, frame_height = 640, 640
-                pose_result = classify_pose(pose_classifier, keypoints, frame_width, frame_height)
-                LOGGER.info(f"Camera {camera_name} - Detection {i}: {pose_result}")
-                # If using label-only classifier, set fall_confidence based on label
-                if isinstance(pose_result, dict) and pose_result.get('label', '') == 'fallen':
-                    fall_confidence = 1.0
-                else:
-                    fall_confidence = 0.0
-                if fall_confidence > 0.7:  # or your desired threshold
-                    person_id = str(i)
-                    await fall_alerts.send_fall_alert(
-                        camera_name=camera_name,
-                        person_id=person_id,
-                        confidence=fall_confidence,
-                        image=image,
-                        metadata={"probabilities": pose_result}
-                    )
-                    LOGGER.info(f"Fall detected for detection {i}, alert sent.")
-                # Add detection to output list for objectfilter-camera, including pose classification label
-                output_detections.append({
-                    "image_time": image_timestamp,
-                    "camera_name": camera_name,
-                    "detection_number": i,
-                    "label": "person",
-                    "pose_label": pose_result["label"] if isinstance(pose_result, dict) and "label" in pose_result else pose_result,
-                    "confidence": detections[i]["confidence"],
-                    "bbox": detections[i]["bbox"],
-                    "keypoints": keypoints
-                })
-            except Exception as e:
-                LOGGER.error(f"Error classifying pose for camera {camera_name}, detection {i}: {e}")
+
+        try:
+            # Get frame dimensions from the preprocessed image (should be 640x640)
+            frame_width, frame_height = 640, 640
+            pose_result = classify_pose(pose_classifier, keypoints, frame_width, frame_height)
+            LOGGER.info(f"Camera {camera_name} - Detection {i}: {pose_result}")
+            # If using label-only classifier, set fall_confidence based on label
+            if isinstance(pose_result, dict) and pose_result.get('label', '') == 'fallen':
+                fall_confidence = 1.0
+            else:
+                fall_confidence = 0.0
+
+            # --- Per-camera cooldown logic ---
+            cooldown_seconds = 30
+            now = time.time()
+            last_time = camera_last_fall_time.get(camera_name, 0)
+            LOGGER.debug(f"[Cooldown] Camera: {camera_name}, Now: {now}, Last: {last_time}, Delta: {now - last_time:.2f}s, Cooldown: {cooldown_seconds}s")
+            can_alert = (now - last_time) > cooldown_seconds
+
+            if fall_confidence > 0.7 and can_alert:
+                person_id = str(i)
+                LOGGER.info(f"[Cooldown] Sending alert for {camera_name} (last alert {now - last_time:.2f}s ago)")
+                await fall_alerts.send_fall_alert(
+                    camera_name=camera_name,
+                    person_id=person_id,
+                    confidence=detections[i]["confidence"],
+                    image=image,
+                    metadata={"probabilities": pose_result}
+                )
+                camera_last_fall_time[camera_name] = now
+                LOGGER.info(f"Fall detected for detection {i}, alert sent. Updated last_fall_time to {now}")
+            elif fall_confidence > 0.7 and not can_alert:
+                LOGGER.info(f"[Cooldown] Fall detected for {camera_name} but still in cooldown window ({now - last_time:.2f}s < {cooldown_seconds}s); no alert sent.")
+
+            # Add detection to output list for objectfilter-camera, including pose classification label
+            output_detections.append({
+                "image_time": image_timestamp,
+                "camera_name": camera_name,
+                "detection_number": i,
+                "label": "person",
+                "pose_label": pose_result["label"] if isinstance(pose_result, dict) and "label" in pose_result else pose_result,
+                "confidence": detections[i]["confidence"],
+                "bbox": detections[i]["bbox"],
+                "keypoints": keypoints
+            })
+        except Exception as e:
+            LOGGER.error(f"Error classifying pose for camera {camera_name}, detection {i}: {e}")
         # Output all detections as JSON for objectfilter-camera
     print(json.dumps(output_detections, indent=2))
 
