@@ -508,7 +508,7 @@ class FallDetectionAlerts:
             LOGGER.error(f"❌ {attempt_name} webhook error: {e}")
             return False
     
-    async def save_fall_image(self, camera_name: str, person_id: str, confidence: float, image: ViamImage, data_manager=None, vision_service=None, detection_info=None):
+    async def save_fall_image(self, camera_name: str, person_id: str, confidence: float, image: ViamImage, data_manager=None, vision_service=None, detection_info=None, keypoints=None):
         """Save fall detection image using data manager camera capture with Fall tag"""
         try:
             LOGGER.info(f"🔄 Triggering fall image capture for camera: {camera_name}")
@@ -532,7 +532,8 @@ class FallDetectionAlerts:
                             "person_id": person_id,
                             "confidence": f"{confidence:.3f}",
                             "event_type": "fall",
-                            "vision_service": "yolo11n-pose"
+                            "vision_service": "yolo11n-pose",
+                            "keypoints": keypoints
                         }
                     )
                     
@@ -549,7 +550,8 @@ class FallDetectionAlerts:
                             bbox = detection_info.get('bbox')
                             detection_label = detection_info.get('label')
                             pose_label = detection_info.get('pose_label')
-                            keypoints = detection_info.get('keypoints')
+                            # Use keypoints argument if provided, else from detection_info
+                            keypoints_ann = keypoints if keypoints is not None else detection_info.get('keypoints')
                             timestamp = detection_info.get('timestamp')
                             if not timestamp:
                                 from datetime import datetime
@@ -560,7 +562,7 @@ class FallDetectionAlerts:
                                 detection_label=detection_label,
                                 pose_label=pose_label,
                                 camera_name=camera_name,
-                                keypoints=keypoints,
+                                keypoints=keypoints_ann,
                                 timestamp=timestamp
                             )
                             LOGGER.info("✅ Viam Cloud annotation submitted for fall image")
@@ -577,12 +579,12 @@ class FallDetectionAlerts:
                     LOGGER.error(f"❌ Data manager capture failed: {dm_error}")
                     LOGGER.info("🔄 Falling back to file-based method")
                     
-                    # Fallback: Save to the data manager's capture directory
-                    return await self._save_fall_image_to_file(camera_name, person_id, confidence, image)
+                    # Fallback: Save to the data manager's capture directory, pass keypoints
+                    return await self._save_fall_image_to_file(camera_name, person_id, confidence, image, keypoints=keypoints)
                     
             else:
                 LOGGER.warning("⚠️ No data manager or vision service provided - using file-based fallback")
-                file_result = await self._save_fall_image_to_file(camera_name, person_id, confidence, image)
+                file_result = await self._save_fall_image_to_file(camera_name, person_id, confidence, image, keypoints=keypoints)
 
                 # --- Viam Cloud Annotation Integration (file fallback, corrected signature) ---
                 if VIAM_ANNOTATOR_AVAILABLE and detection_info:
@@ -592,7 +594,7 @@ class FallDetectionAlerts:
                         bbox = detection_info.get('bbox')
                         detection_label = detection_info.get('label')
                         pose_label = detection_info.get('pose_label')
-                        keypoints = detection_info.get('keypoints')
+                        keypoints_ann = keypoints if keypoints is not None else detection_info.get('keypoints')
                         timestamp = detection_info.get('timestamp')
                         if not timestamp:
                             from datetime import datetime
@@ -603,7 +605,7 @@ class FallDetectionAlerts:
                             detection_label=detection_label,
                             pose_label=pose_label,
                             camera_name=camera_name,
-                            keypoints=keypoints,
+                            keypoints=keypoints_ann,
                             timestamp=timestamp
                         )
                         LOGGER.info("✅ Viam Cloud annotation submitted for fall image (file fallback)")
@@ -622,33 +624,33 @@ class FallDetectionAlerts:
             LOGGER.error(traceback.format_exc())
             return {"status": "error", "method": "save_fall_image", "error": str(e)}
     
-    async def _save_fall_image_to_file(self, camera_name: str, person_id: str, confidence: float, image: ViamImage):
+    async def _save_fall_image_to_file(self, camera_name: str, person_id: str, confidence: float, image: ViamImage, keypoints=None):
         """Fallback method to save image directly to data manager's capture directory"""
         try:
             from datetime import datetime
             import os
-            
+
             # Use the data manager's capture directory
             capture_dir = "/home/sunil/Documents/viam_captured_images"
             timestamp = datetime.utcnow()
-            
+
             # Create filename with proper Viam naming convention for data manager to recognize
             # Format: [timestamp]_[component_name]_[method_name].[extension]
             timestamp_str = timestamp.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
             filename = f"{timestamp_str}_{camera_name}_ReadImage.jpg"
             filepath = os.path.join(capture_dir, filename)
-            
+
             # Ensure directory exists
             os.makedirs(capture_dir, exist_ok=True)
-            
+
             # Save the image
             with open(filepath, 'wb') as f:
                 f.write(image.data)
-            
+
             # Create metadata file with Fall tag for data manager to process
             metadata_filename = f"{timestamp_str}_{camera_name}_ReadImage.json"
             metadata_filepath = os.path.join(capture_dir, metadata_filename)
-            
+
             import json
             metadata_content = {
                 "component_name": camera_name,
@@ -659,25 +661,26 @@ class FallDetectionAlerts:
                     "person_id": person_id,
                     "confidence": f"{confidence:.3f}",
                     "event_type": "fall",
-                    "vision_service": "yolo11n-pose"
+                    "vision_service": "yolo11n-pose",
+                    "keypoints": keypoints
                 }
             }
-            
+
             with open(metadata_filepath, 'w') as meta_f:
                 json.dump(metadata_content, meta_f, indent=2)
-            
+
             if os.path.exists(filepath):
                 file_size = os.path.getsize(filepath)
                 LOGGER.info(f"✅ Fall image saved: {filename} ({file_size} bytes)")
                 LOGGER.info(f"📋 Metadata saved: {metadata_filename}")
                 LOGGER.info(f"🎯 Component: {camera_name}, Tags: ['Fall']")
                 LOGGER.info("🔄 Files will sync to Viam within 1 minute")
-                
+
                 return {"status": "success", "method": "file_fallback", "filename": filename, "path": filepath}
             else:
                 LOGGER.error(f"❌ Failed to save: {filepath}")
                 return {"status": "error", "method": "file_fallback", "error": "File not saved"}
-                
+
         except Exception as e:
             LOGGER.error(f"❌ Error in file fallback: {e}")
             return {"status": "error", "method": "file_fallback", "error": str(e)}
