@@ -32,9 +32,39 @@ ROBOT_API_KEY_ID = "db33ed99-42fe-46e4-a403-d9af6729dd2b"
 TRITON_SERVICE_NAME = "pose-estimate"  # Replace with your ML model service name
 POSE_CLASSIFIER_PATH = "/home/sunil/pose-classifier-module/pose_classifier_svc.joblib"  # Adjust path if needed
 
-# Setup logging
-logging.basicConfig(level=logging.DEBUG)
+# Setup logging (configurable via LOG_LEVEL env var)
+LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
+numeric_level = getattr(logging, LOG_LEVEL, logging.INFO)
+logging.basicConfig(level=numeric_level)
 LOGGER = logging.getLogger(__name__)
+
+
+async def start_health_server(host: str = '127.0.0.1', port: int = 8000):
+    """Start a lightweight aiohttp health endpoint in the background.
+    Returns an AppRunner which should be cleaned up with runner.cleanup().
+    """
+    try:
+        from aiohttp import web
+    except Exception:
+        LOGGER.warning("aiohttp not installed - health endpoint will not be available. Install with: pip install aiohttp")
+        return None
+
+    app = web.Application()
+    start_time = time.time()
+
+    async def _health(request):
+        return web.json_response({
+            'status': 'ok',
+            'uptime_seconds': time.time() - start_time
+        })
+
+    app.router.add_get('/health', _health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host, port)
+    await site.start()
+    LOGGER.info(f"Health endpoint available at http://{host}:{port}/health")
+    return runner
 
 # --- CONNECTION ---
 async def connect():
@@ -243,133 +273,178 @@ async def main():
     USE_TEST_IMAGE = False  # Set to False to use the Viam camera
     TEST_IMAGE_PATH = "/home/sunil/pose-classifier-module/pose-classifier/camerasystemNVIDIA_training_camera_2025-07-06T20_53_12.274Z.jpg"  # Path to your test image
 
-    for camera_name in camera_names:
-        LOGGER.info(f"Processing camera: {camera_name}")
-        if USE_TEST_IMAGE:
-            # Load test image from disk
-            img = cv2.imread(TEST_IMAGE_PATH)
-            if img is None:
-                LOGGER.error(f"Failed to load test image: {TEST_IMAGE_PATH}")
-                continue
-            _, img_bytes = cv2.imencode('.jpg', img)
-            image = ViamImage(data=img_bytes.tobytes(), mime_type='image/jpeg')
-            LOGGER.info(f"Loaded test image from: {TEST_IMAGE_PATH}")
-        else:
-            camera = Camera.from_robot(robot, camera_name)
-            image = await camera.get_image()
-            LOGGER.info(f"Captured image from camera: {camera_name}")
-
-        try:
-            input_tensors = {"input": preprocess_image(image)}
-        except Exception as e:
-            LOGGER.error(f"Error in preprocessing image for camera {camera_name}: {e}")
-            continue
-
-        try:
-            output_tensors = await ml_model.infer(input_tensors)
-            LOGGER.info("Inference complete.")
-            # --- Debugging: Log output tensor info ---
-            for k, v in output_tensors.items():
-                LOGGER.info(f"Output key: {k}, shape: {getattr(v, 'shape', type(v))}, dtype: {getattr(v, 'dtype', type(v))}")
-                if hasattr(v, 'shape') and len(v.shape) >= 2:
-                    LOGGER.info(f"Number of channels in '{k}': {v.shape[1]}")
-            LOGGER.info(f"Tensor mappings: {list(output_tensors.keys())}")
-        except Exception as e:
-            LOGGER.error(f"Error during inference for camera {camera_name}: {e}")
-            continue
-
-        try:
-            detections, keypoints_list = process_yolo_pose_outputs(output_tensors)
-            LOGGER.info(f"Detections: {len(detections)}")
-        except Exception as e:
-            LOGGER.error(f"Error in post-processing outputs for camera {camera_name}: {e}")
-            continue
-
-
-    import datetime
-    import time
-    # --- Add cooldown tracking per camera (persist across main calls) ---
+    # Persistent state across polling iterations
     camera_last_fall_time = {}
-    output_detections = []
-    # Get the current time once per image capture
-    image_timestamp = datetime.datetime.now().isoformat()
 
-    for i, keypoints in enumerate(keypoints_list):
+    # Polling loop configuration (seconds)
+    poll_interval = int(os.environ.get('POLL_INTERVAL_SECONDS', 5))
+
+    output_detections = []
+
+    # PID file handling
+    pid_file = os.environ.get('PID_FILE', '/tmp/run_pose_pipeline.pid')
+    try:
+        with open(pid_file, 'w') as pf:
+            pf.write(str(os.getpid()))
+        LOGGER.info(f"Wrote PID file: {pid_file}")
+    except Exception as e:
+        LOGGER.warning(f"Could not write PID file {pid_file}: {e}")
+
+    # Start health endpoint if requested
+    health_runner = None
+    if os.environ.get('ENABLE_HEALTH_ENDPOINT', '1') == '1':
+        health_host = os.environ.get('HEALTH_HOST', '127.0.0.1')
+        health_port = int(os.environ.get('HEALTH_PORT', '8000'))
+        try:
+            health_runner = await start_health_server(health_host, health_port)
+        except Exception as e:
+            LOGGER.warning(f"Failed to start health server: {e}")
+
+    try:
+        while True:
+            # Re-discover cameras each loop to handle dynamic robots
+            camera_names = get_camera_names(robot)
+            LOGGER.debug(f"Polling cameras: {camera_names}")
+
+            for camera_name in camera_names:
+                LOGGER.info(f"Processing camera: {camera_name}")
+                if USE_TEST_IMAGE:
+                    # Load test image from disk
+                    img = cv2.imread(TEST_IMAGE_PATH)
+                    if img is None:
+                        LOGGER.error(f"Failed to load test image: {TEST_IMAGE_PATH}")
+                        continue
+                    _, img_bytes = cv2.imencode('.jpg', img)
+                    image = ViamImage(data=img_bytes.tobytes(), mime_type='image/jpeg')
+                    LOGGER.info(f"Loaded test image from: {TEST_IMAGE_PATH}")
+                else:
+                    try:
+                        camera = Camera.from_robot(robot, camera_name)
+                        image = await camera.get_image()
+                        LOGGER.info(f"Captured image from camera: {camera_name}")
+                    except Exception as e:
+                        LOGGER.error(f"Failed to get image from camera {camera_name}: {e}")
+                        continue
+
+                try:
+                    input_tensors = {"input": preprocess_image(image)}
+                except Exception as e:
+                    LOGGER.error(f"Error in preprocessing image for camera {camera_name}: {e}")
+                    continue
+
+                try:
+                    output_tensors = await ml_model.infer(input_tensors)
+                    LOGGER.info("Inference complete.")
+                    # --- Debugging: Log output tensor info ---
+                    for k, v in output_tensors.items():
+                        LOGGER.info(f"Output key: {k}, shape: {getattr(v, 'shape', type(v))}, dtype: {getattr(v, 'dtype', type(v))}")
+                        if hasattr(v, 'shape') and len(v.shape) >= 2:
+                            LOGGER.info(f"Number of channels in '{k}': {v.shape[1]}")
+                    LOGGER.info(f"Tensor mappings: {list(output_tensors.keys())}")
+                except Exception as e:
+                    LOGGER.error(f"Error during inference for camera {camera_name}: {e}")
+                    continue
+
+                try:
+                    detections, keypoints_list = process_yolo_pose_outputs(output_tensors)
+                    LOGGER.info(f"Detections: {len(detections)}")
+                except Exception as e:
+                    LOGGER.error(f"Error in post-processing outputs for camera {camera_name}: {e}")
+                    continue
+
+                # Timestamp for this image
+                image_timestamp = datetime.datetime.now().isoformat()
+
+                for i, detection in enumerate(detections):
+                    try:
+                        keypoints = detection.get('keypoints')
+                        # Get frame dimensions from the preprocessed image (should be 640x640)
+                        frame_width, frame_height = 640, 640
+                        pose_result = classify_pose(pose_classifier, keypoints, frame_width, frame_height)
+                        LOGGER.info(f"Camera {camera_name} - Detection {i}: {pose_result}")
+
+                        if isinstance(pose_result, dict):
+                            pose_label = pose_result.get('label', '')
+                            pose_confidence_raw = pose_result.get('confidence', 1.0 if pose_label == 'fallen' else 0.0)
+                        else:
+                            pose_label = pose_result
+                            pose_confidence_raw = 1.0 if pose_label == 'fallen' else 0.0
+                        try:
+                            pose_confidence = float(pose_confidence_raw)
+                        except Exception:
+                            pose_confidence = 1.0 if pose_label == 'fallen' else 0.0
+                        fall_confidence = pose_confidence
+
+                        # --- Per-camera cooldown logic ---
+                        cooldown_seconds = 30
+                        now = time.time()
+                        last_time = camera_last_fall_time.get(camera_name, 0)
+                        LOGGER.debug(f"[Cooldown] Camera: {camera_name}, Now: {now}, Last: {last_time}, Delta: {now - last_time:.2f}s, Cooldown: {cooldown_seconds}s")
+                        can_alert = (now - last_time) > cooldown_seconds
+
+                        if fall_confidence > 0.7 and can_alert:
+                            person_id = str(i)
+                            LOGGER.info(f"[Cooldown] Sending alert for {camera_name} (last alert {now - last_time:.2f}s ago)")
+                            await fall_alerts.send_fall_alert(
+                                camera_name=camera_name,
+                                alert_type="fall",
+                                person_id=person_id,
+                                confidence=pose_confidence,
+                                image=image,
+                                metadata={"probabilities": pose_result}
+                            )
+                            camera_last_fall_time[camera_name] = now
+                            LOGGER.info(f"Fall detected for detection {i}, alert sent. Updated last_fall_time to {now}")
+                        elif fall_confidence > 0.7 and not can_alert:
+                            LOGGER.info(f"[Cooldown] Fall detected for {camera_name} but still in cooldown window ({now - last_time:.2f}s < {cooldown_seconds}s); no alert sent.")
+
+                        # Add detection to output list for objectfilter-camera, including pose classification label
+                        output_detections.append({
+                            "image_time": image_timestamp,
+                            "camera_name": camera_name,
+                            "detection_number": i,
+                            "label": "person",
+                            "pose_label": pose_label,
+                            "confidence": pose_confidence,
+                            "bbox": detection.get("bbox"),
+                            "keypoints": keypoints
+                        })
+                    except Exception as e:
+                        LOGGER.error(f"Error classifying pose for camera {camera_name}, detection {i}: {e}")
+
+            # Print or persist detections (keeps behavior similar to single-shot)
+            if output_detections:
+                print(json.dumps(output_detections, indent=2))
+                # Clear after printing to avoid duplicate outputs in next loop
+                output_detections.clear()
+
+            # Sleep until next poll
+            await asyncio.sleep(poll_interval)
+
+    except asyncio.CancelledError:
+        LOGGER.info("Main loop cancelled, shutting down")
+    except KeyboardInterrupt:
+        LOGGER.info("Interrupted by user, shutting down")
+    finally:
+        # Cleanup health endpoint
+        if health_runner:
+            try:
+                await health_runner.cleanup()
+                LOGGER.info("Health endpoint stopped")
+            except Exception:
+                pass
 
         try:
-            # Get frame dimensions from the preprocessed image (should be 640x640)
-            frame_width, frame_height = 640, 640
-            pose_result = classify_pose(pose_classifier, keypoints, frame_width, frame_height)
-            LOGGER.info(f"Camera {camera_name} - Detection {i}: {pose_result}")
-            # Extract pose classifier confidence if available, else fallback to 1.0 for 'fallen', 0.0 otherwise
-            if isinstance(pose_result, dict):
-                pose_label = pose_result.get('label', '')
-                pose_confidence_raw = pose_result.get('confidence', 1.0 if pose_label == 'fallen' else 0.0)
-            else:
-                pose_label = pose_result
-                pose_confidence_raw = 1.0 if pose_label == 'fallen' else 0.0
-            # Ensure pose_confidence is always a float
-            try:
-                pose_confidence = float(pose_confidence_raw)
-            except Exception:
-                pose_confidence = 1.0 if pose_label == 'fallen' else 0.0
-            # For alert logic, treat 'fallen' as high confidence
-            fall_confidence = pose_confidence
-
-            # --- Per-camera cooldown logic ---
-            cooldown_seconds = 30
-            now = time.time()
-            last_time = camera_last_fall_time.get(camera_name, 0)
-            LOGGER.debug(f"[Cooldown] Camera: {camera_name}, Now: {now}, Last: {last_time}, Delta: {now - last_time:.2f}s, Cooldown: {cooldown_seconds}s")
-            can_alert = (now - last_time) > cooldown_seconds
-
-            if fall_confidence > 0.7 and can_alert:
-                person_id = str(i)
-                LOGGER.info(f"[Cooldown] Sending alert for {camera_name} (last alert {now - last_time:.2f}s ago)")
-                await fall_alerts.send_fall_alert(
-                    camera_name=camera_name,
-                    alert_type="fall",
-                    person_id=person_id,
-                    confidence=pose_confidence,
-                    image=image,
-                    metadata={"probabilities": pose_result}
-                )
-                camera_last_fall_time[camera_name] = now
-                LOGGER.info(f"Fall detected for detection {i}, alert sent. Updated last_fall_time to {now}")
-            elif fall_confidence > 0.7 and not can_alert:
-                LOGGER.info(f"[Cooldown] Fall detected for {camera_name} but still in cooldown window ({now - last_time:.2f}s < {cooldown_seconds}s); no alert sent.")
-
-            # Add detection to output list for objectfilter-camera, including pose classification label
-            output_detections.append({
-                "image_time": image_timestamp,
-                "camera_name": camera_name,
-                "detection_number": i,
-                "label": "person",
-                "pose_label": pose_label,
-                "confidence": pose_confidence,
-                "bbox": detections[i]["bbox"],
-                "keypoints": keypoints
-            })
-        except Exception as e:
-            LOGGER.error(f"Error classifying pose for camera {camera_name}, detection {i}: {e}")
-        # Output all detections as JSON for objectfilter-camera
-    print(json.dumps(output_detections, indent=2))
-
-    # After pose classification and fall alert logic, check for after-hours person detection
-    # If any detection (person) exists, send after-hours alert if in after-hours window
-    # (after_hours_alerts is optional and commented out by default)
-    # if len(detections) > 0 and 'after_hours_alerts' in locals():
-    #     await after_hours_alerts.send_after_hours_alert(
-    #         camera_name=camera_name,
-    #         image=image,
-    #         metadata={
-    #             "detections": [
-    #                 {"bbox": det["bbox"], "confidence": det["confidence"]} for det in detections
-    #             ]
-    #         }
-    #     )
-
-    await robot.close()
+            await robot.close()
+        except Exception:
+            pass
+        # Remove PID file
+        try:
+            if os.path.exists(pid_file):
+                os.remove(pid_file)
+                LOGGER.info(f"Removed PID file: {pid_file}")
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     asyncio.run(main())
