@@ -12,6 +12,7 @@ import joblib
 import numpy as np
 import logging
 import cv2
+import os
 from viam.robot.client import RobotClient
 from viam.services.mlmodel import MLModelClient
 from viam.components.camera import Camera
@@ -19,6 +20,9 @@ from viam.media.video import ViamImage # pyright: ignore[reportMissingImports]
 import io
 from fall_detection_alerts import FallDetectionAlerts
 from after_hours_alerts import AfterHoursAlerts
+import json
+import datetime
+import time
 
 # --- CONFIGURATION ---
 ROBOT_ADDRESS = "camerasystemnvidia-main.niccosz288.viam.cloud"  # Replace with your robot address
@@ -179,8 +183,29 @@ async def main():
     LOGGER.info("Connected to robot.")
 
     LOGGER.info("Loading pose classifier...")
-    pose_classifier = joblib.load(POSE_CLASSIFIER_PATH)
-    LOGGER.info("Loaded pose classifier.")
+    # Allow overriding via environment variable, and try a few sensible fallbacks
+    candidate = os.environ.get('POSE_CLASSIFIER_PATH') or POSE_CLASSIFIER_PATH
+    fallback_paths = [
+        candidate,
+        os.path.join(os.path.dirname(__file__), 'pose_classifier.joblib'),
+        os.path.join(os.path.dirname(__file__), '..', 'pose_classifier.joblib'),
+        '/home/sunil/pose-classifier-module/pose_classifier.joblib',
+        '/home/sunil/pose-classifier-module/pose_classifier.joblib'
+    ]
+    pose_classifier = None
+    for p in fallback_paths:
+        try:
+            if p and os.path.exists(p):
+                LOGGER.info(f"Attempting to load pose classifier from: {p}")
+                pose_classifier = joblib.load(p)
+                LOGGER.info(f"Loaded pose classifier from: {p}")
+                break
+        except Exception as e:
+            LOGGER.warning(f"Failed to load pose classifier from {p}: {e}")
+
+    if pose_classifier is None:
+        LOGGER.error("Could not find or load a pose classifier. Set POSE_CLASSIFIER_PATH env var or place 'pose_classifier.joblib' next to the script.")
+        raise SystemExit(1)
 
     # Get ML model
     ml_model = MLModelClient.from_robot(robot, TRITON_SERVICE_NAME)
@@ -208,24 +233,16 @@ async def main():
         # 'twilio_to_phones': ['+1987654321'],
         # ...
     })
-"""
-    # Initialize after-hours alert service
-    after_hours_alerts = AfterHoursAlerts({
-        # Fill with your config or load from file/env
-        # 'twilio_account_sid': 'your_sid',
-        # 'twilio_auth_token': 'your_token',
-        # 'twilio_from_phone': '+1234567890',
-        # 'twilio_to_phones': ['+1987654321'],
-        # 'after_hours_start': '22:00',
-        # 'after_hours_end': '06:00',
-        # ...
-    })
-"""
+
+    # Initialize after-hours alert service (disabled by default)
+    # after_hours_alerts = AfterHoursAlerts({
+    #     # Fill with your config or load from file/env
+    # })
+
     # --- TEST IMAGE MODE ---
     USE_TEST_IMAGE = False  # Set to False to use the Viam camera
     TEST_IMAGE_PATH = "/home/sunil/pose-classifier-module/pose-classifier/camerasystemNVIDIA_training_camera_2025-07-06T20_53_12.274Z.jpg"  # Path to your test image
 
-    import json
     for camera_name in camera_names:
         LOGGER.info(f"Processing camera: {camera_name}")
         if USE_TEST_IMAGE:
@@ -337,24 +354,21 @@ async def main():
             LOGGER.error(f"Error classifying pose for camera {camera_name}, detection {i}: {e}")
         # Output all detections as JSON for objectfilter-camera
     print(json.dumps(output_detections, indent=2))
-"""
-        # After pose classification and fall alert logic, check for after-hours person detection
-        # If any detection (person) exists, send after-hours alert if in after-hours window
-        if len(detections) > 0:
-            # Only send one after-hours alert per image/camera
-            await after_hours_alerts.send_after_hours_alert(
-                camera_name=camera_name,
-                image=image,
-                metadata={
-                    "detections": [
-                        {
-                            "bbox": det["bbox"],
-                            "confidence": det["confidence"]
-                        } for det in detections
-                    ]
-                }
-            )
-"""
+
+    # After pose classification and fall alert logic, check for after-hours person detection
+    # If any detection (person) exists, send after-hours alert if in after-hours window
+    # (after_hours_alerts is optional and commented out by default)
+    # if len(detections) > 0 and 'after_hours_alerts' in locals():
+    #     await after_hours_alerts.send_after_hours_alert(
+    #         camera_name=camera_name,
+    #         image=image,
+    #         metadata={
+    #             "detections": [
+    #                 {"bbox": det["bbox"], "confidence": det["confidence"]} for det in detections
+    #             ]
+    #         }
+    #     )
+
     await robot.close()
 
 if __name__ == "__main__":
