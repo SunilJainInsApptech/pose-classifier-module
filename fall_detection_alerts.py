@@ -248,18 +248,16 @@ class FallDetectionAlerts:
             LOGGER.error(f"❌ Error sending fall alert: {e}")
             return False
     
-    async def send_push_notification(self, camera_name: str, person_id: str, confidence: float, timestamp: datetime, metadata: Optional[Dict[str, Any]] = None, image: Optional[ViamImage] = None) -> bool:
-        """Send push notification to rigguardian.com web app"""
+    async def send_push_notification(self, camera_name: str, alert_type: str, person_id: str, confidence: float, timestamp: datetime, metadata: Optional[Dict[str, Any]] = None, image: Optional[ViamImage] = None) -> bool:
+        """Send push notification to rigguardian.com web app (forward alert_type)."""
         try:
-            # For web-based apps, use webhook approach (not Twilio Notify)
-            # Twilio Notify is for mobile apps only
-            return await self.send_webhook_notification(camera_name, person_id, confidence, timestamp, metadata, image)
-                
+            # Forward alert_type to webhook notification flow so payloads use the correct type
+            return await self.send_webhook_notification(camera_name=camera_name, person_id=person_id, confidence=confidence, timestamp=timestamp, metadata=metadata, image=image, alert_type=alert_type)
         except Exception as e:
             LOGGER.error(f"❌ Error sending push notification: {e}")
             return False
     
-    async def send_webhook_notification(self, camera_name: str, person_id: str, confidence: float, timestamp: datetime, metadata: Optional[Dict[str, Any]] = None, image: Optional[ViamImage] = None) -> bool:
+    async def send_webhook_notification(self, camera_name: str, person_id: str, confidence: float, timestamp: datetime, metadata: Optional[Dict[str, Any]] = None, image: Optional[ViamImage] = None, alert_type: str = "fall") -> bool:
         """Send notification via webhook to configured push URL(s).
 
         This consolidates attempts so that failures to the primary format don't
@@ -273,7 +271,7 @@ class FallDetectionAlerts:
 
             # Build primary payload (Railway-style)
             primary_payload = {
-                "alert_type": "fall",
+                "alert_type": alert_type,
                 "camera_name": camera_name,
                 "person_id": str(person_id),
                 "location": f"Camera {camera_name}",
@@ -307,7 +305,7 @@ class FallDetectionAlerts:
 
             # Add rigguardian-compatible compact payload as a secondary attempt
             rigguardian_payload = {
-                "alert_type": "fall",
+                "alert_type": alert_type,
                 "timestamp": timestamp.isoformat(),
                 "camera_name": camera_name,
                 "person_id": str(person_id),
@@ -323,7 +321,7 @@ class FallDetectionAlerts:
 
             # Minimal payload as a last resort
             minimal_payload = {
-                "alert_type": "fall",
+                "alert_type": alert_type,
                 "timestamp": timestamp.isoformat(),
                 "camera_name": camera_name,
                 "person_id": str(person_id),
@@ -494,33 +492,51 @@ class FallDetectionAlerts:
                 LOGGER.warning("⚠️ No data manager or vision service provided - using file-based fallback")
                 file_result = await self._save_fall_image_to_file(camera_name, person_id, confidence, image, keypoints=keypoints)
 
-                # --- Viam Cloud Annotation Integration (file fallback, corrected signature) ---
-                if VIAM_ANNOTATOR_AVAILABLE and detection_info:
+                # --- Viam Cloud Annotation Integration (file fallback) ---
+                # If detection_info is provided, use it. Otherwise, try to use the
+                # saved file result to submit an annotation (so annotations happen
+                # even when DataManager isn't available).
+                if VIAM_ANNOTATOR_AVAILABLE:
                     try:
                         annotator = ViamDataAnnotator()
-                        filename = detection_info.get('filename')
-                        bbox = detection_info.get('bbox')
-                        detection_label = detection_info.get('label')
-                        pose_label = detection_info.get('pose_label')
-                        keypoints_ann = keypoints if keypoints is not None else detection_info.get('keypoints')
-                        timestamp = detection_info.get('timestamp')
-                        if not timestamp:
+
+                        # Prefer detection_info if present
+                        if detection_info:
+                            filename = detection_info.get('filename')
+                            bbox = detection_info.get('bbox')
+                            detection_label = detection_info.get('label')
+                            pose_label = detection_info.get('pose_label')
+                            keypoints_ann = keypoints if keypoints is not None else detection_info.get('keypoints')
+                            timestamp = detection_info.get('timestamp')
+                            if not timestamp:
+                                from datetime import datetime
+                                timestamp = datetime.utcnow().isoformat()
+                        else:
+                            # Use file_result metadata for annotation when available
+                            filename = file_result.get('filename') if isinstance(file_result, dict) else None
+                            bbox = None
+                            detection_label = 'fall'
+                            pose_label = None
+                            keypoints_ann = keypoints
                             from datetime import datetime
                             timestamp = datetime.utcnow().isoformat()
-                        await annotator.annotate_image(
-                            filename=filename,
-                            bbox=bbox,
-                            detection_label=detection_label,
-                            pose_label=pose_label,
-                            camera_name=camera_name,
-                            keypoints=keypoints_ann,
-                            timestamp=timestamp
-                        )
-                        LOGGER.info("✅ Viam Cloud annotation submitted for fall image (file fallback)")
+
+                        if filename:
+                            await annotator.annotate_image(
+                                filename=filename,
+                                bbox=bbox,
+                                detection_label=detection_label,
+                                pose_label=pose_label,
+                                camera_name=camera_name,
+                                keypoints=keypoints_ann,
+                                timestamp=timestamp
+                            )
+                            LOGGER.info("✅ Viam Cloud annotation submitted for fall image (file fallback)")
+                        else:
+                            LOGGER.warning("⚠️ No filename available from file_result; skipping Viam Cloud annotation (file fallback)")
+
                     except Exception as ann_e:
                         LOGGER.error(f"❌ Viam Cloud annotation failed (file fallback): {ann_e}")
-                elif not detection_info:
-                    LOGGER.warning("⚠️ No detection_info provided for annotation; skipping Viam Cloud annotation (file fallback)")
                 else:
                     LOGGER.warning("⚠️ ViamDataAnnotator not available - skipping Viam Cloud annotation (file fallback)")
 
