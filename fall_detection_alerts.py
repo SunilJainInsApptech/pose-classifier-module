@@ -260,18 +260,23 @@ class FallDetectionAlerts:
             return False
     
     async def send_webhook_notification(self, camera_name: str, person_id: str, confidence: float, timestamp: datetime, metadata: Optional[Dict[str, Any]] = None, image: Optional[ViamImage] = None) -> bool:
-        """Send notification via webhook to Railway server"""
+        """Send notification via webhook to configured push URL(s).
+
+        This consolidates attempts so that failures to the primary format don't
+        prevent trying alternative payload shapes. Uses _try_webhook_endpoint
+        for the actual HTTP POST and logs each attempt.
+        """
         try:
             import aiohttp
             import json
             import base64
-            
-            # Create webhook payload matching Railway server expected structure
-            webhook_data = {
+
+            # Build primary payload (Railway-style)
+            primary_payload = {
                 "alert_type": "fall",
                 "camera_name": camera_name,
                 "person_id": str(person_id),
-                "location": f"Camera {camera_name}",  # Default location based on camera
+                "location": f"Camera {camera_name}",
                 "confidence": confidence,
                 "severity": "critical",
                 "title": "Fall Alert Detected",
@@ -285,150 +290,43 @@ class FallDetectionAlerts:
                     {"action": "acknowledge", "title": "Acknowledge"}
                 ]
             }
-            
-            # Add image data if available
+
+            # Include image data when available (base64)
             if image:
                 try:
-                    # Convert image to base64
-                    image_b64 = base64.b64encode(image.data).decode('utf-8')
-                    timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S")
-                    
-                    webhook_data["image"] = image_b64
-                    webhook_data["image_filename"] = f"fall_alert_{camera_name}_{timestamp_str}.jpg"
-                    
-                    LOGGER.info(f"� Added image data to webhook ({len(image.data)} bytes)")
+                    primary_payload["image"] = base64.b64encode(image.data).decode("utf-8")
+                    primary_payload["image_filename"] = f"fall_alert_{camera_name}_{timestamp.strftime('%Y%m%d_%H%M%S')}.jpg"
+                    LOGGER.info(f"📷 Added image to webhook payload ({len(image.data)} bytes)")
                 except Exception as e:
-                    LOGGER.warning(f"⚠️ Failed to encode image for webhook: {e}")
-            
-            LOGGER.info(f"🔄 Sending webhook to Railway server")
-            LOGGER.info(f"📊 Fall alert: {camera_name} at {timestamp.strftime('%H:%M:%S')} ({confidence:.1%} confidence)")
-            LOGGER.info(f"🎯 URL: {self.push_notification_url}")
-            
-            # Send to Railway server
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self.push_notification_url,
-                    json=webhook_data,
-                    headers={
-                        'Content-Type': 'application/json',
-                        'User-Agent': 'FallDetectionSystem/1.0',
-                        'X-Alert-Type': 'fall',
-                        'X-Sensor-Type': 'fall_detection',
-                        'Accept': 'application/json'
-                    },
-                    timeout=aiohttp.ClientTimeout(total=15)
-                ) as response:
-                    response_text = await response.text()
-                    
-                    LOGGER.info(f"📡 Railway server response: {response.status}")
-                    
-                    if response.status == 200:
-                        LOGGER.info("✅ Webhook sent successfully to Railway server")
-                        LOGGER.info(f"📄 Response: {response_text}")
-                        return True
-                    else:
-                        LOGGER.error(f"❌ Railway server webhook failed with status {response.status}")
-                        LOGGER.error(f"📄 Response: {response_text}")
-                        
-                        # Try to parse response for specific error details
-                        try:
-                            response_json = json.loads(response_text)
-                            if "error" in response_json:
-                                LOGGER.error(f"🔍 Server error: {response_json['error']}")
-                            if "missing_fields" in response_json:
-                                LOGGER.error(f"💡 Missing fields: {response_json['missing_fields']}")
-                            if "details" in response_json:
-                                LOGGER.error(f"📝 Details: {response_json['details']}")
-                        except json.JSONDecodeError:
-                            LOGGER.error("📄 Response is not valid JSON")
-                        
-                        return False
-                        
-        except ImportError:
-            LOGGER.error("❌ aiohttp not installed - install with: pip install aiohttp")
-            return False
-        except aiohttp.ClientTimeout:
-            LOGGER.error("❌ Webhook request to Railway server timed out")
-            return False
-        except Exception as e:
-            LOGGER.error(f"❌ Railway server webhook error: {e}")
-            return False
-        try:
-            import aiohttp
-            import json
-            
-            # Create webhook payload matching rigguardian.com expected structure exactly
-            webhook_data = {
+                    LOGGER.warning(f"⚠️ Failed to attach image to payload: {e}")
+
+            # Keep a list of payloads to try in order (primary first, then alternatives)
+            payloads_to_try = [
+                (primary_payload, "primary"),
+            ]
+
+            # Add rigguardian-compatible compact payload as a secondary attempt
+            rigguardian_payload = {
                 "alert_type": "fall",
                 "timestamp": timestamp.isoformat(),
                 "camera_name": camera_name,
-                "person_id": person_id,
+                "person_id": str(person_id),
                 "confidence": confidence,
                 "severity": "critical",
-                "location": camera_name,  # Using camera name as location
+                "location": camera_name,
                 "title": "🚨 Fall Alert - Immediate Action Required",
                 "message": f"Fall detected on {camera_name} with {confidence:.1%} confidence",
                 "requires_immediate_attention": True,
                 "notification_type": "web_push"
             }
-            
-            LOGGER.info(f"🔄 Sending webhook to rigguardian.com with expected structure")
-            LOGGER.info(f"📊 Fall alert: {camera_name} at {timestamp.strftime('%H:%M:%S')} ({confidence:.1%} confidence)")
-            
-            # Debug: Log the payload structure more concisely to avoid truncation
-            LOGGER.info(f"� Payload types: alert_type={type(webhook_data['alert_type']).__name__}, timestamp={type(webhook_data['timestamp']).__name__}, camera_name={type(webhook_data['camera_name']).__name__}")
-            LOGGER.info(f"🔧 More types: person_id={type(webhook_data['person_id']).__name__}({webhook_data['person_id']}), confidence={type(webhook_data['confidence']).__name__}({webhook_data['confidence']})")
-            LOGGER.info(f"🔧 Final types: severity={type(webhook_data['severity']).__name__}, requires_immediate_attention={type(webhook_data['requires_immediate_attention']).__name__}")
-            
-            # Show a compact version of the payload
-            LOGGER.info(f"🔍 Compact payload: alert_type='{webhook_data['alert_type']}', person_id='{webhook_data['person_id']}', confidence={webhook_data['confidence']}")
-            LOGGER.info(f"🔍 Full JSON: {json.dumps(webhook_data, separators=(',', ':'))}")  # Compact JSON
-            
-            # First, try sending to the main endpoint
-            success = await self._try_webhook_endpoint(webhook_data, self.push_notification_url, "main")
-            if success:
-                return True
-            
-            # Test if endpoint is reachable with a simple GET request
-            LOGGER.info("🔄 Testing if rigguardian.com endpoint is reachable...")
-            try:
-                import aiohttp
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(self.push_notification_url, timeout=aiohttp.ClientTimeout(total=5)) as response:
-                        LOGGER.info(f"🌐 GET {self.push_notification_url} returned {response.status}")
-                        if response.status == 404:
-                            LOGGER.error("❌ API endpoint not found - check if /api/fall-alert exists")
-                        elif response.status == 405:
-                            LOGGER.info("✅ Endpoint exists but only accepts POST (this is expected)")
-            except Exception as e:
-                LOGGER.error(f"❌ Cannot reach endpoint: {e}")
-            
-            # If main endpoint fails, try alternative approaches
-            LOGGER.info("🔄 Main endpoint failed, trying alternative approaches...")
-            
-            # Try without emojis in case they're causing encoding issues
-            webhook_data_no_emoji = webhook_data.copy()
-            webhook_data_no_emoji["title"] = "Fall Alert - Immediate Action Required"
-            webhook_data_no_emoji["message"] = f"Fall detected on {camera_name} with {confidence:.1%} confidence"
-            
-            success = await self._try_webhook_endpoint(webhook_data_no_emoji, self.push_notification_url, "no-emoji")
-            if success:
-                return True
-            
-            # Try with string confidence (in case number is causing issues)
-            webhook_data_str = webhook_data_no_emoji.copy()
-            webhook_data_str["confidence"] = f"{confidence:.3f}"
-            
-            success = await self._try_webhook_endpoint(webhook_data_str, self.push_notification_url, "string-confidence")
-            if success:
-                return True
-            
-            # Try with minimal required fields only
-            webhook_data_minimal = {
+            payloads_to_try.append((rigguardian_payload, "rigguardian"))
+
+            # Minimal payload as a last resort
+            minimal_payload = {
                 "alert_type": "fall",
                 "timestamp": timestamp.isoformat(),
                 "camera_name": camera_name,
-                "person_id": str(person_id),  # Ensure it's a string
+                "person_id": str(person_id),
                 "confidence": confidence,
                 "severity": "critical",
                 "location": camera_name,
@@ -437,14 +335,24 @@ class FallDetectionAlerts:
                 "requires_immediate_attention": True,
                 "notification_type": "web_push"
             }
-            
-            success = await self._try_webhook_endpoint(webhook_data_minimal, self.push_notification_url, "minimal")
-            if success:
-                return True
-            
+            payloads_to_try.append((minimal_payload, "minimal"))
+
+            # Try each payload in order using the helper
+            for payload, name in payloads_to_try:
+                LOGGER.info(f"🔄 Attempting webhook ({name}) to {self.push_notification_url}")
+                try:
+                    sent = await self._try_webhook_endpoint(payload, self.push_notification_url, name)
+                    if sent:
+                        LOGGER.info(f"✅ Webhook ({name}) delivered successfully")
+                        return True
+                    else:
+                        LOGGER.warning(f"⚠️ Webhook ({name}) attempt failed; trying next payload if available")
+                except Exception as e:
+                    LOGGER.error(f"❌ Exception during webhook ({name}) attempt: {e}")
+
             LOGGER.error("❌ All webhook attempts failed")
             return False
-                        
+
         except ImportError:
             LOGGER.error("❌ aiohttp not installed - install with: pip install aiohttp")
             return False
