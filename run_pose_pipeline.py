@@ -363,8 +363,17 @@ async def main():
                         pose_result = classify_pose(pose_classifier, keypoints, frame_width, frame_height)
                         LOGGER.info(f"Camera {camera_name} - Detection {i}: {pose_result}")
 
-                        fall_confidence = detection.get('confidence', 0.0)
-                        pose_label = detection.get('label', '')
+                        if isinstance(pose_result, dict):
+                            pose_label = pose_result.get('label', '')
+                            pose_confidence_raw = pose_result.get('confidence', 1.0 if pose_label == 'fallen' else 0.0)
+                        else:
+                            pose_label = pose_result
+                            pose_confidence_raw = 1.0 if pose_label == 'fallen' else 0.0
+                        try:
+                            pose_confidence = float(pose_confidence_raw)
+                        except Exception:
+                            pose_confidence = 1.0 if pose_label == 'fallen' else 0.0
+                        fall_confidence = pose_confidence
 
                         # --- Per-camera cooldown logic ---
                         cooldown_seconds = 30
@@ -380,7 +389,7 @@ async def main():
                                 camera_name=camera_name,
                                 alert_type="fall",
                                 person_id=person_id,
-                                confidence=fall_confidence,
+                                confidence=pose_confidence,
                                 image=image,
                                 metadata={"probabilities": pose_result}
                             )
@@ -396,7 +405,7 @@ async def main():
                             "detection_number": i,
                             "label": "person",
                             "pose_label": pose_label,
-                            "confidence": fall_confidence,
+                            "confidence": pose_confidence,
                             "bbox": detection.get("bbox"),
                             "keypoints": keypoints
                         })

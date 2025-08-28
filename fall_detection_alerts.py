@@ -21,11 +21,7 @@ except ImportError:
     VIAM_ANNOTATOR_AVAILABLE = False
 
 # Try to import Viam DataManager service
-try:
-    from viam.services.data_manager import DataManager
-    VIAM_DATA_AVAILABLE = True
-except ImportError:
-    VIAM_DATA_AVAILABLE = False
+# DataManager integration removed: always use file-based fallback in this deployment
 
 LOGGER = logging.getLogger(__name__)
 
@@ -173,10 +169,8 @@ class FallDetectionAlerts:
                             person_id: str, 
                             confidence: float,
                             image: ViamImage,
-                            metadata: Optional[Dict[str, Any]] = None,
-                            data_manager=None,
-                            vision_service=None) -> bool:
-        """Send fall detection alert via Twilio SMS"""
+                            metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Send fall detection alert via Twilio SMS (file-fallback only)."""
         
         try:
             # Check if we should send alert
@@ -187,8 +181,11 @@ class FallDetectionAlerts:
             timestamp = datetime.now()
             self.last_alert_time[person_id] = timestamp
             
-            # Save image to Viam-monitored directory for automatic sync
-            await self.save_fall_image(camera_name, person_id, confidence, image, data_manager, vision_service)
+            # Save image using simple file-based fallback (data_manager/vision_service removed)
+            keypoints = None
+            if metadata and isinstance(metadata, dict):
+                keypoints = metadata.get('keypoints')
+            await self.save_fall_image(camera_name, person_id, confidence, image, detection_info=None, keypoints=keypoints)
             
             # Save image locally for SMS reference
             image_path = await self.save_image_locally(image, person_id)
@@ -414,134 +411,67 @@ class FallDetectionAlerts:
             LOGGER.error(f"❌ {attempt_name} webhook error: {e}")
             return False
     
-    async def save_fall_image(self, camera_name: str, person_id: str, confidence: float, image: ViamImage, data_manager=None, vision_service=None, detection_info=None, keypoints=None):
-        """Save fall detection image using data manager camera capture with Fall tag"""
+    async def save_fall_image(self, camera_name: str, person_id: str, confidence: float, image: ViamImage, detection_info=None, keypoints=None):
+        """Save fall detection image using the file-based fallback only.
+
+        The deployment for this project does not provide DataManager or VisionService,
+        so we always write the image and metadata into the local capture
+        directory and optionally submit a Viam Cloud annotation if the
+        ViamDataAnnotator is available.
+        """
         try:
-            LOGGER.info(f"🔄 Triggering fall image capture for camera: {camera_name}")
-            LOGGER.info(f"📊 Image size: {len(image.data)} bytes, Person: {person_id}, Confidence: {confidence:.3f}")
-            
-            # Use data manager to capture from camera with Fall tag
-            if data_manager and vision_service:
+            LOGGER.info(f"🔄 Saving fall image (file fallback) for camera: {camera_name}")
+            LOGGER.info(f"� Image size: {len(image.data)} bytes, Person: {person_id}, Confidence: {confidence:.3f}")
+
+            # Save using the file-based fallback
+            file_result = await self._save_fall_image_to_file(camera_name, person_id, confidence, image, keypoints=keypoints)
+
+            # If Viam annotator is available, try to annotate using detection_info
+            # when present; otherwise use the saved filename from file_result.
+            if VIAM_ANNOTATOR_AVAILABLE:
                 try:
-                    # Get the camera component name from the vision service
-                    # The vision service should have access to the camera it depends on
-                    
-                    LOGGER.info(f"🏷️ Triggering data manager capture with Fall tag for camera: {camera_name}")
-                    
-                    # Use data manager's capture functionality with tags
-                    # The data manager will capture from the camera component with the Fall tag
-                    capture_result = await data_manager.capture(
-                        component_name=camera_name,
-                        method_name="ReadImage",
-                        tags=["Fall"],
-                        additional_metadata={
-                            "person_id": person_id,
-                            "confidence": f"{confidence:.3f}",
-                            "event_type": "fall",
-                            "vision_service": "yolo11n-pose",
-                            "keypoints": keypoints
-                        }
-                    )
-                    
-                    LOGGER.info(f"✅ Data manager capture completed: {capture_result}")
-                    LOGGER.info(f"🎯 Component: {camera_name}, Tag: Fall, Person: {person_id}")
-                    
+                    annotator = ViamDataAnnotator()
 
-
-                    # --- Viam Cloud Annotation Integration (corrected signature) ---
-                    if VIAM_ANNOTATOR_AVAILABLE and detection_info:
-                        try:
-                            annotator = ViamDataAnnotator()
-                            filename = detection_info.get('filename')
-                            bbox = detection_info.get('bbox')
-                            detection_label = detection_info.get('label')
-                            pose_label = detection_info.get('pose_label')
-                            # Use keypoints argument if provided, else from detection_info
-                            keypoints_ann = keypoints if keypoints is not None else detection_info.get('keypoints')
-                            timestamp = detection_info.get('timestamp')
-                            if not timestamp:
-                                from datetime import datetime
-                                timestamp = datetime.utcnow().isoformat()
-                            await annotator.annotate_image(
-                                filename=filename,
-                                bbox=bbox,
-                                detection_label=detection_label,
-                                pose_label=pose_label,
-                                camera_name=camera_name,
-                                keypoints=keypoints_ann,
-                                timestamp=timestamp
-                            )
-                            LOGGER.info("✅ Viam Cloud annotation submitted for fall image")
-                        except Exception as ann_e:
-                            LOGGER.error(f"❌ Viam Cloud annotation failed: {ann_e}")
-                    elif not detection_info:
-                        LOGGER.warning("⚠️ No detection_info provided for annotation; skipping Viam Cloud annotation")
-                    else:
-                        LOGGER.warning("⚠️ ViamDataAnnotator not available - skipping Viam Cloud annotation")
-
-                    return {"status": "success", "method": "data_manager_capture", "result": capture_result}
-                    
-                except Exception as dm_error:
-                    LOGGER.error(f"❌ Data manager capture failed: {dm_error}")
-                    LOGGER.info("🔄 Falling back to file-based method")
-                    
-                    # Fallback: Save to the data manager's capture directory, pass keypoints
-                    return await self._save_fall_image_to_file(camera_name, person_id, confidence, image, keypoints=keypoints)
-                    
-            else:
-                LOGGER.warning("⚠️ No data manager or vision service provided - using file-based fallback")
-                file_result = await self._save_fall_image_to_file(camera_name, person_id, confidence, image, keypoints=keypoints)
-
-                # --- Viam Cloud Annotation Integration (file fallback) ---
-                # If detection_info is provided, use it. Otherwise, try to use the
-                # saved file result to submit an annotation (so annotations happen
-                # even when DataManager isn't available).
-                if VIAM_ANNOTATOR_AVAILABLE:
-                    try:
-                        annotator = ViamDataAnnotator()
-
-                        # Prefer detection_info if present
-                        if detection_info:
-                            filename = detection_info.get('filename')
-                            bbox = detection_info.get('bbox')
-                            detection_label = detection_info.get('label')
-                            pose_label = detection_info.get('pose_label')
-                            keypoints_ann = keypoints if keypoints is not None else detection_info.get('keypoints')
-                            timestamp = detection_info.get('timestamp')
-                            if not timestamp:
-                                from datetime import datetime
-                                timestamp = datetime.utcnow().isoformat()
-                        else:
-                            # Use file_result metadata for annotation when available
-                            filename = file_result.get('filename') if isinstance(file_result, dict) else None
-                            bbox = None
-                            detection_label = 'fall'
-                            pose_label = None
-                            keypoints_ann = keypoints
+                    if detection_info:
+                        filename = detection_info.get('filename')
+                        bbox = detection_info.get('bbox')
+                        detection_label = detection_info.get('label', 'fall')
+                        pose_label = detection_info.get('pose_label')
+                        keypoints_ann = keypoints if keypoints is not None else detection_info.get('keypoints')
+                        timestamp = detection_info.get('timestamp')
+                        if not timestamp:
                             from datetime import datetime
                             timestamp = datetime.utcnow().isoformat()
+                    else:
+                        filename = file_result.get('filename') if isinstance(file_result, dict) else None
+                        bbox = None
+                        detection_label = 'fall'
+                        pose_label = None
+                        keypoints_ann = keypoints
+                        from datetime import datetime
+                        timestamp = datetime.utcnow().isoformat()
 
-                        if filename:
-                            await annotator.annotate_image(
-                                filename=filename,
-                                bbox=bbox,
-                                detection_label=detection_label,
-                                pose_label=pose_label,
-                                camera_name=camera_name,
-                                keypoints=keypoints_ann,
-                                timestamp=timestamp
-                            )
-                            LOGGER.info("✅ Viam Cloud annotation submitted for fall image (file fallback)")
-                        else:
-                            LOGGER.warning("⚠️ No filename available from file_result; skipping Viam Cloud annotation (file fallback)")
+                    if filename:
+                        await annotator.annotate_image(
+                            filename=filename,
+                            bbox=bbox,
+                            detection_label=detection_label,
+                            pose_label=pose_label,
+                            camera_name=camera_name,
+                            keypoints=keypoints_ann,
+                            timestamp=timestamp
+                        )
+                        LOGGER.info("✅ Viam Cloud annotation submitted for fall image (file fallback)")
+                    else:
+                        LOGGER.warning("⚠️ No filename available for annotation (file fallback)")
 
-                    except Exception as ann_e:
-                        LOGGER.error(f"❌ Viam Cloud annotation failed (file fallback): {ann_e}")
-                else:
-                    LOGGER.warning("⚠️ ViamDataAnnotator not available - skipping Viam Cloud annotation (file fallback)")
+                except Exception as ann_e:
+                    LOGGER.error(f"❌ Viam Cloud annotation failed (file fallback): {ann_e}")
+            else:
+                LOGGER.debug("ViamDataAnnotator not available; skipping cloud annotation")
 
-                return file_result
-                
+            return file_result
+
         except Exception as e:
             LOGGER.error(f"❌ Error in save_fall_image: {e}")
             import traceback
