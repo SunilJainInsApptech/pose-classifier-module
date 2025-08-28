@@ -25,9 +25,9 @@ import datetime
 import time
 
 # --- CONFIGURATION ---
-ROBOT_ADDRESS = "camerasystemnvidia-main.niccosz288.viam.cloud"  # Replace with your robot address
-ROBOT_API_KEY = "qj8qcg0093x28jtoi90cs5inashvjnd8"
-ROBOT_API_KEY_ID = "db33ed99-42fe-46e4-a403-d9af6729dd2b"
+ROBOT_ADDRESS = os.environ.get('ROBOT_ADDRESS')  # Replace with your robot address
+ROBOT_API_KEY = os.environ.get('ROBOT_API_KEY')
+ROBOT_API_KEY_ID = os.environ.get('ROBOT_API_KEY_ID')
 
 TRITON_SERVICE_NAME = "pose-estimate"  # Replace with your ML model service name
 POSE_CLASSIFIER_PATH = "/home/sunil/pose-classifier-module/pose_classifier_svc.joblib"  # Adjust path if needed
