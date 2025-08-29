@@ -33,7 +33,7 @@ TRITON_SERVICE_NAME = "pose-estimate"  # Replace with your ML model service name
 POSE_CLASSIFIER_PATH = "/home/sunil/pose-classifier-module/pose_classifier_svc.joblib"  # Adjust path if needed
 
 # Setup logging (configurable via LOG_LEVEL env var)
-LOG_LEVEL = 'INFO'
+LOG_LEVEL = 'DEBUG'
 numeric_level = getattr(logging, LOG_LEVEL, logging.INFO)
 logging.basicConfig(level=numeric_level)
 LOGGER = logging.getLogger(__name__)
