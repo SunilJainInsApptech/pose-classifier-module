@@ -68,11 +68,11 @@ async def start_health_server(host: str = '127.0.0.1', port: int = 8000):
 
 # --- CONNECTION ---
 async def connect():
-    opts = RobotClient.Options.with_api_key(
-        api_key=ROBOT_API_KEY,
-        api_key_id=ROBOT_API_KEY_ID
+    return await RobotClient.with_api_key_and_address(
+        address=ROBOT_ADDRESS,
+        api_key_id=ROBOT_API_KEY_ID,
+        api_key=ROBOT_API_KEY
     )
-    return await RobotClient.at_address(ROBOT_ADDRESS, opts)
 
 # --- PREPROCESSING ---
 def preprocess_image(image):
