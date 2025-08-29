@@ -282,7 +282,7 @@ async def main():
     output_detections = []
 
     # PID file handling
-    pid_file = os.environ.get('PID_FILE', '/tmp/run_pose_pipeline.pid')
+    pid_file = os.environ.get('PID_FILE', '/home/sunil/run_pose_pipeline.pid')
     try:
         with open(pid_file, 'w') as pf:
             pf.write(str(os.getpid()))
