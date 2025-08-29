@@ -5,8 +5,8 @@ from viam.app.data.client import DataClient
 from viam.app.data import BoundingBox, Tag
 
 # Load Viam credentials from environment variables
-VIAM_LOCATION_SECRET = os.environ.get("VIAM_LOCATION_SECRET")
-VIAM_LOCATION_ID = os.environ.get("VIAM_LOCATION_ID")
+VIAM_LOCATION_SECRET = os.environ.get("VIAM_LOCATION_SECRET", "qj8qcg0093x28jtoi90cs5inashvjnd8")
+VIAM_LOCATION_ID = os.environ.get("VIAM_LOCATION_ID", "db33ed99-42fe-46e4-a403-d9af6729dd2b")
 
 class ViamDataAnnotator:
     def __init__(self):
