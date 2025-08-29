@@ -33,7 +33,7 @@ TRITON_SERVICE_NAME = "pose-estimate"  # Replace with your ML model service name
 POSE_CLASSIFIER_PATH = "/home/sunil/pose-classifier-module/pose_classifier_svc.joblib"  # Adjust path if needed
 
 # Setup logging (configurable via LOG_LEVEL env var)
-LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
+LOG_LEVEL = 'INFO'
 numeric_level = getattr(logging, LOG_LEVEL, logging.INFO)
 logging.basicConfig(level=numeric_level)
 LOGGER = logging.getLogger(__name__)
@@ -214,7 +214,7 @@ async def main():
 
     LOGGER.info("Loading pose classifier...")
     # Allow overriding via environment variable, and try a few sensible fallbacks
-    candidate = os.environ.get('POSE_CLASSIFIER_PATH') or POSE_CLASSIFIER_PATH
+    candidate = '/home/sunil/pose-classifier-module/pose_classifier_svc.joblib' or POSE_CLASSIFIER_PATH
     fallback_paths = [
         candidate,
         os.path.join(os.path.dirname(__file__), 'pose_classifier.joblib'),
@@ -277,12 +277,12 @@ async def main():
     camera_last_fall_time = {}
 
     # Polling loop configuration (seconds)
-    poll_interval = int(os.environ.get('POLL_INTERVAL_SECONDS', 5))
+    poll_interval = 5
 
     output_detections = []
 
     # PID file handling
-    pid_file = os.environ.get('PID_FILE', '/home/sunil/run_pose_pipeline.pid')
+    pid_file = '/home/sunil/run_pose_pipeline.pid'
     try:
         with open(pid_file, 'w') as pf:
             pf.write(str(os.getpid()))
