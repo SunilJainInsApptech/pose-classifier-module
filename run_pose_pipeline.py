@@ -68,11 +68,14 @@ async def start_health_server(host: str = '127.0.0.1', port: int = 8000):
 
 # --- CONNECTION ---
 async def connect():
-    return await RobotClient.with_api_key_and_address(
-        address=ROBOT_ADDRESS,
-        api_key_id=ROBOT_API_KEY_ID,
-        api_key=ROBOT_API_KEY
-    )
+    # Newer viam-sdk versions expose `at_address` and an `Options` helper.
+    # Try to use Options when available, otherwise attempt a kwargs fallback.
+    try:
+        opts = RobotClient.Options(api_key_id=ROBOT_API_KEY_ID, api_key=ROBOT_API_KEY)
+        return await RobotClient.at_address(ROBOT_ADDRESS, opts)
+    except Exception:
+        # Fallback: try calling at_address with keyword args (some SDK versions accept this)
+        return await RobotClient.at_address(ROBOT_ADDRESS, api_key_id=ROBOT_API_KEY_ID, api_key=ROBOT_API_KEY)
 
 # --- PREPROCESSING ---
 def preprocess_image(image):
