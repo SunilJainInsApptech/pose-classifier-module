@@ -91,18 +91,31 @@ async def connect():
     if hasattr(RobotClient, 'Options') and hasattr(RobotClient, 'at_address'):
         try:
             opts = RobotClient.Options()
-            # Try to set common option attributes defensively
-            for k, v in (('api_key', ROBOT_API_KEY), ('api_key_id', ROBOT_API_KEY_ID)):
+            # Use the SDK-provided helper to attach API key(s) when available.
+            # Try common signatures defensively: (api_key_id, api_key) then (api_key,)
+            if hasattr(opts, 'with_api_key'):
                 try:
-                    setattr(opts, k, v)
-                except Exception:
-                    # ignore if attribute doesn't exist on this Options implementation
-                    pass
+                    # First try (api_key_id, api_key)
+                    opts.with_api_key(ROBOT_API_KEY_ID, ROBOT_API_KEY)
+                except TypeError:
+                    try:
+                        # Fallback: some SDKs accept only the raw api_key
+                        opts.with_api_key(ROBOT_API_KEY)
+                    except Exception:
+                        # If with_api_key exists but both call forms fail, ignore and continue
+                        pass
+
+            # Finally attempt to connect passing the Options instance.
+            # Some SDK versions expect (address, options), others may accept (options,) — try both.
             try:
                 return await RobotClient.at_address(ROBOT_ADDRESS, opts)
             except TypeError:
-                # some versions expect only (address,) so try positional below
-                raise
+                # Try the alternative ordering where the Options object is the sole arg
+                try:
+                    return await RobotClient.at_address(opts)
+                except Exception:
+                    # Re-raise to be caught by outer except and recorded
+                    raise
         except Exception as e:
             errors.append(f"at_address(Options) failed: {e}")
 
