@@ -16,7 +16,7 @@ import os
 from viam.robot.client import RobotClient
 from viam.services.mlmodel import MLModelClient
 from viam.components.camera import Camera
-from viam.media.video import ViamImage # pyright: ignore[reportMissingImports]
+from viam.media.video import ViamImage 
 import io
 from fall_detection_alerts import FallDetectionAlerts
 from after_hours_alerts import AfterHoursAlerts
@@ -25,12 +25,12 @@ import datetime
 import time
 
 # --- CONFIGURATION ---
-ROBOT_ADDRESS = os.environ.get('ROBOT_ADDRESS', 'camerasystemnvidia-main.niccosz288.viam.cloud')  # Replace with your robot address
+ROBOT_ADDRESS = os.environ.get('ROBOT_ADDRESS', 'camerasystemnvidia-main.niccosz288.viam.cloud')  
 ROBOT_API_KEY = os.environ.get('ROBOT_API_KEY', 'qj8qcg0093x28jtoi90cs5inashvjnd8')
 ROBOT_API_KEY_ID = os.environ.get('ROBOT_API_KEY_ID', 'db33ed99-42fe-46e4-a403-d9af6729dd2b')
 
-TRITON_SERVICE_NAME = "pose-estimate"  # Replace with your ML model service name
-POSE_CLASSIFIER_PATH = "/home/sunil/pose-classifier-module/pose_classifier_svc.joblib"  # Adjust path if needed
+TRITON_SERVICE_NAME = "pose-estimate"  
+POSE_CLASSIFIER_PATH = "/home/sunil/pose-classifier-module/pose_classifier_svc.joblib"  
 
 # Setup logging (configurable via LOG_LEVEL env var)
 LOG_LEVEL = 'DEBUG'
@@ -40,9 +40,6 @@ LOGGER = logging.getLogger(__name__)
 
 
 async def start_health_server(host: str = '127.0.0.1', port: int = 8000):
-    """Start a lightweight aiohttp health endpoint in the background.
-    Returns an AppRunner which should be cleaned up with runner.cleanup().
-    """
     try:
         from aiohttp import web
     except Exception:
@@ -68,66 +65,11 @@ async def start_health_server(host: str = '127.0.0.1', port: int = 8000):
 
 # --- CONNECTION ---
 async def connect():
-    """Connect to a Viam robot using the installed viam-sdk.
-
-    This helper attempts several call signatures to remain compatible with
-    multiple viam-sdk releases. It collects errors from each attempt and
-    raises a single RuntimeError if none succeed.
-    """
-    errors = []
-
-    # 1) Try the older convenience method if present
-    if hasattr(RobotClient, 'with_api_key_and_address'):
-        try:
-            return await RobotClient.with_api_key_and_address(
-                address=ROBOT_ADDRESS,
-                api_key_id=ROBOT_API_KEY_ID,
-                api_key=ROBOT_API_KEY,
-            )
-        except Exception as e:
-            errors.append(f"with_api_key_and_address failed: {e}")
-
-    # 2) Try at_address with an Options object (create empty Options then set attributes)
-    if hasattr(RobotClient, 'Options') and hasattr(RobotClient, 'at_address'):
-        try:
-            opts = RobotClient.Options()
-            # Use the SDK-provided helper to attach API key(s) when available.
-            # Try common signatures defensively: (api_key_id, api_key) then (api_key,)
-            if hasattr(opts, 'with_api_key'):
-                try:
-                    # First try (api_key_id, api_key)
-                    opts.with_api_key(ROBOT_API_KEY_ID, ROBOT_API_KEY)
-                except TypeError:
-                    try:
-                        # Fallback: some SDKs accept only the raw api_key
-                        opts.with_api_key(ROBOT_API_KEY)
-                    except Exception:
-                        # If with_api_key exists but both call forms fail, ignore and continue
-                        pass
-
-            # Finally attempt to connect passing the Options instance.
-            # Some SDK versions expect (address, options), others may accept (options,) — try both.
-            try:
-                return await RobotClient.at_address(ROBOT_ADDRESS, opts)
-            except TypeError:
-                # Try the alternative ordering where the Options object is the sole arg
-                try:
-                    return await RobotClient.at_address(opts)
-                except Exception:
-                    # Re-raise to be caught by outer except and recorded
-                    raise
-        except Exception as e:
-            errors.append(f"at_address(Options) failed: {e}")
-
-    # 3) Try at_address with only the address (SDK may pick up env-based creds)
-    if hasattr(RobotClient, 'at_address'):
-        try:
-            return await RobotClient.at_address(ROBOT_ADDRESS)
-        except Exception as e:
-            errors.append(f"at_address(address) failed: {e}")
-
-    # If we reach here nothing worked
-    raise RuntimeError("Could not connect to RobotClient; attempts failed: " + "; ".join(errors))
+    opts = RobotClient.Options.with_api_key(
+        api_key=ROBOT_API_KEY,
+        api_key_id=ROBOT_API_KEY_ID
+    )
+    return await RobotClient.at_address(ROBOT_ADDRESS, opts)
 
 # --- PREPROCESSING ---
 def preprocess_image(image):
