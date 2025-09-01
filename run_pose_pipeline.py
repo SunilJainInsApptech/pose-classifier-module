@@ -68,14 +68,53 @@ async def start_health_server(host: str = '127.0.0.1', port: int = 8000):
 
 # --- CONNECTION ---
 async def connect():
-    # Newer viam-sdk versions expose `at_address` and an `Options` helper.
-    # Try to use Options when available, otherwise attempt a kwargs fallback.
-    try:
-        opts = RobotClient.Options(api_key_id=ROBOT_API_KEY_ID, api_key=ROBOT_API_KEY)
-        return await RobotClient.at_address(ROBOT_ADDRESS, opts)
-    except Exception:
-        # Fallback: try calling at_address with keyword args (some SDK versions accept this)
-        return await RobotClient.at_address(ROBOT_ADDRESS, api_key_id=ROBOT_API_KEY_ID, api_key=ROBOT_API_KEY)
+    """Connect to a Viam robot using the installed viam-sdk.
+
+    This helper attempts several call signatures to remain compatible with
+    multiple viam-sdk releases. It collects errors from each attempt and
+    raises a single RuntimeError if none succeed.
+    """
+    errors = []
+
+    # 1) Try the older convenience method if present
+    if hasattr(RobotClient, 'with_api_key_and_address'):
+        try:
+            return await RobotClient.with_api_key_and_address(
+                address=ROBOT_ADDRESS,
+                api_key_id=ROBOT_API_KEY_ID,
+                api_key=ROBOT_API_KEY,
+            )
+        except Exception as e:
+            errors.append(f"with_api_key_and_address failed: {e}")
+
+    # 2) Try at_address with an Options object (create empty Options then set attributes)
+    if hasattr(RobotClient, 'Options') and hasattr(RobotClient, 'at_address'):
+        try:
+            opts = RobotClient.Options()
+            # Try to set common option attributes defensively
+            for k, v in (('api_key', ROBOT_API_KEY), ('api_key_id', ROBOT_API_KEY_ID)):
+                try:
+                    setattr(opts, k, v)
+                except Exception:
+                    # ignore if attribute doesn't exist on this Options implementation
+                    pass
+            try:
+                return await RobotClient.at_address(ROBOT_ADDRESS, opts)
+            except TypeError:
+                # some versions expect only (address,) so try positional below
+                raise
+        except Exception as e:
+            errors.append(f"at_address(Options) failed: {e}")
+
+    # 3) Try at_address with only the address (SDK may pick up env-based creds)
+    if hasattr(RobotClient, 'at_address'):
+        try:
+            return await RobotClient.at_address(ROBOT_ADDRESS)
+        except Exception as e:
+            errors.append(f"at_address(address) failed: {e}")
+
+    # If we reach here nothing worked
+    raise RuntimeError("Could not connect to RobotClient; attempts failed: " + "; ".join(errors))
 
 # --- PREPROCESSING ---
 def preprocess_image(image):
