@@ -6,6 +6,7 @@ Sends SMS alerts when a fall is detected with image and metadata
 import os
 import asyncio
 import traceback
+import time
 from time import sleep
 import logging
 from datetime import datetime
@@ -39,11 +40,19 @@ class FallDetectionAlerts:
         )
         
         # Handle phone numbers from environment (comma-separated) or config (list)
-        env_phones = os.environ.get('TWILIO_TO_PHONES', '+19738652226') or config.get('twilio_to_phones')
-        if env_phones:
-            self.to_phones = [phone.strip() for phone in env_phones.split(',')]
+        env_phones = os.environ.get('TWILIO_TO_PHONES') or config.get('twilio_to_phones')
+        LOGGER.debug(f"Raw TWILIO_TO_PHONES value: '{env_phones}'")
+        
+        if env_phones and env_phones.strip():
+            # Split by comma and filter out empty strings
+            raw_phones = env_phones.split(',')
+            LOGGER.debug(f"Split phones: {raw_phones}")
+            self.to_phones = [phone.strip() for phone in raw_phones if phone.strip()]
+            LOGGER.debug(f"Filtered phones: {self.to_phones}")
         else:
+            # Fallback to default
             self.to_phones = ['+19738652226']
+            LOGGER.info("Using fallback phone number")
         
         # Validate phone number formats
         self._validate_phone_numbers()
