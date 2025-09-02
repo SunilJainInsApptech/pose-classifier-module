@@ -38,17 +38,11 @@ class FallDetectionAlerts:
         )
         
         # Handle phone numbers from environment (comma-separated) or config (list)
-        env_phones = os.environ.get('TWILIO_TO_PHONES')
+        env_phones = os.environ.get('TWILIO_TO_PHONES', '+19738652226') or config.get('twilio_to_phones')
         if env_phones:
             self.to_phones = [phone.strip() for phone in env_phones.split(',')]
         else:
-            config_phones = config.get('twilio_to_phones', '+19738652226')
-            if isinstance(config_phones, str):
-                self.to_phones = [phone.strip() for phone in config_phones.split(',')]
-            elif isinstance(config_phones, list):
-                self.to_phones = [str(phone).strip() for phone in config_phones]
-            else:
-                self.to_phones = ['+19738652226']
+            self.to_phones = ['+19738652226']
         
         self.webhook_url = (
             os.environ.get('TWILIO_WEBHOOK_URL') or 
