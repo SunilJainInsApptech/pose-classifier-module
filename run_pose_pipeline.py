@@ -268,10 +268,7 @@ async def main():
 
     # --- TEST IMAGE MODE ---
     USE_TEST_IMAGE = False  # Set to False to use the Viam camera
-    TEST_IMAGE_PATH = "/home/sunil/pose-classifier-module/pose-classifier/camerasystemNVIDIA_training_camera_2025-07-06T20_53_12.274Z.jpg"  # Path to your test image
-
-    # Persistent state across polling iterations
-    camera_last_fall_time = {}
+    TEST_IMAGE_PATH = "/home/sunil/pose-classifier-module/pose-classifier/camerasystemNVIDIA__2025-08-27T02_00_34.696Z.jpg"  # Path to your test image
 
     # Polling loop configuration (seconds)
     poll_interval = 5
@@ -372,17 +369,11 @@ async def main():
                             pose_confidence = 1.0 if pose_label == 'fallen' else 0.0
                         fall_confidence = pose_confidence
 
-                        # --- Per-camera cooldown logic ---
-                        cooldown_seconds = 30
-                        now = time.time()
-                        last_time = camera_last_fall_time.get(camera_name, 0)
-                        LOGGER.debug(f"[Cooldown] Camera: {camera_name}, Now: {now}, Last: {last_time}, Delta: {now - last_time:.2f}s, Cooldown: {cooldown_seconds}s")
-                        can_alert = (now - last_time) > cooldown_seconds
-
-                        if fall_confidence > 0.7 and can_alert:
+                        # Send fall alert if confidence is high (cooldown handled in fall_detection_alerts)
+                        if fall_confidence > 0.7:
                             person_id = str(i)
-                            LOGGER.info(f"[Cooldown] Sending alert for {camera_name} (last alert {now - last_time:.2f}s ago)")
-                            await fall_alerts.send_fall_alert(
+                            LOGGER.info(f"Fall detected for {camera_name} with confidence {fall_confidence:.3f}")
+                            alert_sent = await fall_alerts.send_fall_alert(
                                 camera_name=camera_name,
                                 alert_type="fall",
                                 person_id=person_id,
@@ -390,10 +381,10 @@ async def main():
                                 image=image,
                                 metadata={"probabilities": pose_result}
                             )
-                            camera_last_fall_time[camera_name] = now
-                            LOGGER.info(f"Fall detected for detection {i}, alert sent. Updated last_fall_time to {now}")
-                        elif fall_confidence > 0.7 and not can_alert:
-                            LOGGER.info(f"[Cooldown] Fall detected for {camera_name} but still in cooldown window ({now - last_time:.2f}s < {cooldown_seconds}s); no alert sent.")
+                            if alert_sent:
+                                LOGGER.info(f"✅ Fall alert sent for detection {i} on camera {camera_name}")
+                            else:
+                                LOGGER.debug(f"⏳ Fall alert not sent (likely due to cooldown or low confidence)")
 
                         # Add detection to output list for objectfilter-camera, including pose classification label
                         output_detections.append({

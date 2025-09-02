@@ -13,6 +13,7 @@ from typing import Optional, Dict, Any
 import base64
 import tempfile
 from twilio.rest import Client
+from twilio.base.exceptions import TwilioRestException
 from viam.media.video import ViamImage
 from annotate_image import main as annotate_main  # Import the main function
 
@@ -44,6 +45,9 @@ class FallDetectionAlerts:
         else:
             self.to_phones = ['+19738652226']
         
+        # Validate phone number formats
+        self._validate_phone_numbers()
+        
         self.webhook_url = (
             os.environ.get('TWILIO_WEBHOOK_URL') or 
             config.get('webhook_url')
@@ -51,8 +55,8 @@ class FallDetectionAlerts:
         
         # Alert settings (these can stay in config since they're not sensitive)
         self.min_confidence = config.get('fall_confidence_threshold', 0.7)
-        self.cooldown_seconds = config.get('alert_cooldown_seconds', 300)
-        self.last_alert_time = {}  # Track last alert time per person
+        self.cooldown_seconds = config.get('alert_cooldown_seconds', 60)
+        self.last_alert_time = {}  # Track last alert time per camera
         
         # Push notification settings
         self.notify_service_sid = (
@@ -85,20 +89,52 @@ class FallDetectionAlerts:
             LOGGER.error(f"❌ Failed to initialize Twilio client: {e}")
             raise
     
-    def should_send_alert(self, person_id: str, confidence: float) -> bool:
-        """Check if we should send an alert based on confidence and cooldown"""
+    def _validate_phone_numbers(self):
+        """Validate phone number formats and log warnings for invalid numbers"""
+        import re
+        
+        # E.164 format: + followed by 1-15 digits
+        e164_pattern = re.compile(r'^\+[1-9]\d{1,14}$')
+        
+        # Check from_phone
+        if self.from_phone and not e164_pattern.match(self.from_phone):
+            LOGGER.warning(f"⚠️ From phone number '{self.from_phone}' may not be valid E.164 format")
+        
+        # Check to_phones and filter out invalid ones
+        valid_phones = []
+        for phone in self.to_phones:
+            if e164_pattern.match(phone):
+                valid_phones.append(phone)
+                LOGGER.info(f"✅ Valid recipient phone: {phone}")
+            else:
+                LOGGER.error(f"❌ Invalid recipient phone number: '{phone}' - must be E.164 format (+1234567890)")
+        
+        if not valid_phones:
+            raise ValueError("No valid recipient phone numbers found. Use E.164 format: +1234567890")
+        
+        # Update to_phones with only valid numbers
+        self.to_phones = valid_phones
+        LOGGER.info(f"📱 Configured {len(self.to_phones)} valid recipient phone number(s)")
+    
+    def should_send_alert(self, camera_name: str, confidence: float) -> bool:
+        """Check if we should send an alert based on confidence and cooldown (per camera)"""
         # Check confidence threshold
         if confidence < self.min_confidence:
             LOGGER.debug(f"Fall confidence {confidence:.3f} below threshold {self.min_confidence}")
             return False
         
-        # Check cooldown period
+        # Check cooldown period per camera (not per person)
         now = datetime.now()
-        if person_id in self.last_alert_time:
-            time_since_last = (now - self.last_alert_time[person_id]).total_seconds()
+        cooldown_key = camera_name  # Use camera_name as the cooldown key
+        if cooldown_key in self.last_alert_time:
+            time_since_last = (now - self.last_alert_time[cooldown_key]).total_seconds()
             if time_since_last < self.cooldown_seconds:
-                LOGGER.debug(f"Alert cooldown active for person {person_id} ({time_since_last:.1f}s < {self.cooldown_seconds}s)")
+                LOGGER.info(f"⏳ Alert cooldown active for camera {camera_name} ({time_since_last:.1f}s < {self.cooldown_seconds}s) - no alert sent")
                 return False
+            else:
+                LOGGER.info(f"✅ Cooldown period expired for camera {camera_name} ({time_since_last:.1f}s >= {self.cooldown_seconds}s) - alert will be sent")
+        else:
+            LOGGER.info(f"🆕 First alert for camera {camera_name} - alert will be sent")
         
         return True
     
@@ -166,13 +202,14 @@ class FallDetectionAlerts:
         """Send fall detection alert via Twilio SMS (file-fallback only)."""
         
         try:
-            # Check if we should send alert
-            if not self.should_send_alert(person_id, confidence):
+            # Check if we should send alert (camera-based cooldown)
+            if not self.should_send_alert(camera_name, confidence):
                 return False
             
-            # Record alert time
+            # Record alert time for this camera
             timestamp = datetime.now()
-            self.last_alert_time[person_id] = timestamp
+            self.last_alert_time[camera_name] = timestamp
+            LOGGER.info(f"🕐 Recording alert time for camera {camera_name}: {timestamp}")
             
             # Save image using simple file-based fallback (data_manager/vision_service removed)
             keypoints = None
@@ -198,6 +235,9 @@ class FallDetectionAlerts:
             success_count = 0
             for phone_number in self.to_phones:
                 try:
+                    # Log the exact numbers being used
+                    LOGGER.info(f"📱 Sending SMS from {self.from_phone} to {phone_number}")
+                    
                     # Send SMS
                     message_obj = self.client.messages.create(
                         body=message,
@@ -209,7 +249,18 @@ class FallDetectionAlerts:
                     success_count += 1
                     
                 except Exception as e:
-                    LOGGER.error(f"❌ Failed to send SMS to {phone_number}: {e}")
+                    # Surface Twilio API error details when available (400 responses etc.)
+                    if hasattr(e, 'code') and hasattr(e, 'msg'):  # Twilio exception
+                        LOGGER.error(
+                            f"❌ Failed to send SMS to {phone_number}: Twilio error {getattr(e, 'code', None)} - {getattr(e, 'msg', None)} (status={getattr(e, 'status', None)})"
+                        )
+                        # Add specific guidance for common errors
+                        if getattr(e, 'code', None) == 21211:
+                            LOGGER.error(f"💡 Error 21211 means invalid 'To' number. Check that {phone_number} is in correct E.164 format (+1234567890)")
+                        elif getattr(e, 'code', None) == 21606:
+                            LOGGER.error(f"💡 Error 21606 means 'From' number {self.from_phone} is not verified/purchased in your Twilio account")
+                    else:
+                        LOGGER.error(f"❌ Failed to send SMS to {phone_number}: {e}")
             
             # Send push notification to rigguardian.com app
             push_success = await self.send_push_notification(
@@ -415,7 +466,7 @@ class FallDetectionAlerts:
             file_result = await self._save_fall_image_to_file(camera_name, person_id, confidence, image, keypoints=keypoints)
             
             # Wait for 1 minute to ensure _save_fall_image_to_file has completed
-            time.sleep(60)
+            sleep(60)
 
             # If the file was saved successfully, run the annotate_image script
             if isinstance(file_result, dict) and 'filename' in file_result:
