@@ -65,6 +65,7 @@ class FallDetectionAlerts:
         # Alert settings (these can stay in config since they're not sensitive)
         self.min_confidence = config.get('fall_confidence_threshold', 0.7)
         self.cooldown_seconds = config.get('alert_cooldown_seconds', 240)
+        LOGGER.debug(f"Cooldown seconds set to: {self.cooldown_seconds}")
         self.last_alert_time = {}  # Track last alert time per camera
         
         # Push notification settings

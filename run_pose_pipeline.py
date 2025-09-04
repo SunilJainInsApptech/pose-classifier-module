@@ -258,7 +258,7 @@ async def main():
         # 'twilio_auth_token': 'your_token',
         # 'twilio_from_phone': '+1234567890',
         # 'twilio_to_phones': ['+1987654321'],
-        # ...
+        'alert_cooldown_seconds': 240,  # Check if this value is set here
     })
 
     # Initialize after-hours alert service (disabled by default)
