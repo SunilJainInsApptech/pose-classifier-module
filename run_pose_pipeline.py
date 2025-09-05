@@ -268,7 +268,7 @@ async def main():
 
     # --- TEST IMAGE MODE ---
     USE_TEST_IMAGE = False  # Set to False to use the Viam camera
-    TEST_IMAGE_PATH = "/home/sunil/pose-classifier-module/pose-classifier/camerasystemNVIDIA__2025-08-27T02_00_34.696Z.jpg"  # Path to your test image
+    TEST_IMAGE_PATH = "camerasystemNVIDIA_training_camera_2025-07-06T20_53_12.274Z.jpg"  # Path to your test image
 
     # Polling loop configuration (seconds)
     poll_interval = 5
