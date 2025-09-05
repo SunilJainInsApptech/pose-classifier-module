@@ -475,8 +475,8 @@ class FallDetectionAlerts:
             # Save using the file-based fallback
             file_result = await self._save_fall_image_to_file(camera_name, person_id, confidence, image, keypoints=keypoints)
             
-            # Wait for 1 minute to ensure _save_fall_image_to_file has completed
-            sleep(60)
+            # Wait asynchronously for 1 minute to ensure _save_fall_image_to_file has completed
+            await asyncio.sleep(60)
 
             # If the file was saved successfully, run the annotate_image script
             if isinstance(file_result, dict) and 'filename' in file_result:
