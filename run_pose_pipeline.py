@@ -118,6 +118,7 @@ def process_yolo_pose_outputs(outputs, confidence_threshold=0.65, iou_threshold=
         LOGGER.debug(f"keypoints.shape: {keypoints.shape}")
         if keypoints.shape[1] > 0:
             # LOGGER.debug(f"First 20 keypoint values of first detection: {keypoints[0][:20]}")
+            pass
     else:
         num_keypoint_channels = num_channels - 6
         LOGGER.info(f"Total channels: {num_channels}, keypoint channels: {num_keypoint_channels}")
