@@ -30,7 +30,7 @@ ROBOT_API_KEY = os.environ.get('ROBOT_API_KEY', 'qj8qcg0093x28jtoi90cs5inashvjnd
 ROBOT_API_KEY_ID = os.environ.get('ROBOT_API_KEY_ID', 'db33ed99-42fe-46e4-a403-d9af6729dd2b')
 
 TRITON_SERVICE_NAME = "pose-estimate"  
-POSE_CLASSIFIER_PATH = "/home/sunil/pose-classifier-module/pose_classifier_svc.joblib"  
+POSE_CLASSIFIER_PATH = "/home/sunil/pose-classifier-module/pose_classifier_20250916.joblib"  
 
 # Setup logging (configurable via LOG_LEVEL env var)
 LOG_LEVEL = 'DEBUG'
