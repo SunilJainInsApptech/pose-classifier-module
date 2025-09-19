@@ -249,11 +249,11 @@ class FallDetectionAlerts:
                     LOGGER.info(f"📱 Sending SMS from {self.from_phone} to {phone_number}")
                     
                     # Send SMS
-                    message_obj = self.client.messages.create(
-                        body=message,
-                        from_=self.from_phone,
-                        to=phone_number
-                    )
+                    # message_obj = self.client.messages.create(
+                    #     body=message,
+                    #     from_=self.from_phone,
+                    #     to=phone_number
+                    # )
                     
                     LOGGER.info(f"📱 Fall alert sent to {phone_number}, SID: {message_obj.sid}")
                     success_count += 1
