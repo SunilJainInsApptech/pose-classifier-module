@@ -374,6 +374,7 @@ async def main():
                         if fall_confidence > 0.7:
                             person_id = str(i)
                             LOGGER.info(f"Fall detected for {camera_name} with confidence {fall_confidence:.3f}")
+                            """
                             alert_sent = await fall_alerts.send_fall_alert(
                                 camera_name=camera_name,
                                 alert_type="fall",
@@ -386,7 +387,7 @@ async def main():
                                 LOGGER.info(f"✅ Fall alert sent for detection {i} on camera {camera_name}")
                             else:
                                 LOGGER.debug(f"⏳ Fall alert not sent (likely due to cooldown or low confidence)")
-
+                            """
                         # Add detection to output list for objectfilter-camera, including pose classification label
                         output_detections.append({
                             "image_time": image_timestamp,
