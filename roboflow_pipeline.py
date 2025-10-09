@@ -63,7 +63,7 @@ client = InferenceHTTPClient(
     api_key=ROBOFLOW_API_KEY
 )
 
-# Initialize alert service (will be created in main)
+# Initialize alert service (will be created on first fall detection)
 alert_service = None
 
 async def connect_to_robot() -> RobotClient:
@@ -251,6 +251,22 @@ def process_roboflow_results(results: Dict, confidence_threshold: float = 0.5) -
     
     return detections
 
+async def get_or_create_alert_service():
+    """Lazy initialize alert service on first fall detection."""
+    global alert_service
+    
+    if alert_service is not None:
+        return alert_service
+    
+    try:
+        LOGGER.info("🔔 Initializing fall detection alert service (first fall detected)...")
+        alert_service = FallDetectionAlerts(ALERT_CONFIG)
+        LOGGER.info("✅ Fall detection alert service initialized")
+        return alert_service
+    except Exception as e:
+        LOGGER.error(f"❌ Failed to initialize alert service: {e}")
+        return None
+
 async def process_camera(robot: RobotClient, camera_name: str):
     """Process a single camera feed."""
     try:
@@ -276,13 +292,18 @@ async def process_camera(robot: RobotClient, camera_name: str):
         for det in detections:
             LOGGER.info(f"  - {det['class']}: {det['confidence']:.2%} (Fall: {det['is_fall']})")
         
-        # Send alerts for falls
-        if alert_service:
-            for det in detections:
-                if det['is_fall']:
-                    LOGGER.info(f"🚨 Triggering fall alert for camera {camera_name}")
+        # Send alerts for falls (initialize service on first fall)
+        for det in detections:
+            if det['is_fall']:
+                LOGGER.info(f"🚨 Fall detected on camera {camera_name}")
+                
+                # Lazy initialize alert service
+                service = await get_or_create_alert_service()
+                
+                if service:
+                    LOGGER.info(f"📤 Sending fall alert for camera {camera_name}")
                     try:
-                        await alert_service.send_fall_alert(
+                        await service.send_fall_alert(
                             camera_name=camera_name,
                             alert_type="fall",
                             person_id=det['detection_id'],
@@ -295,10 +316,11 @@ async def process_camera(robot: RobotClient, camera_name: str):
                                 'model_id': ROBOFLOW_MODEL_ID
                             }
                         )
+                        LOGGER.info(f"✅ Fall alert sent successfully")
                     except Exception as e:
                         LOGGER.error(f"❌ Failed to send fall alert: {e}")
-        else:
-            LOGGER.warning("⚠️ Alert service not initialized - no alerts will be sent")
+                else:
+                    LOGGER.error("⚠️ Alert service failed to initialize - alert not sent")
         
         return detections
         
@@ -308,17 +330,7 @@ async def process_camera(robot: RobotClient, camera_name: str):
 
 async def main():
     """Main execution function."""
-    global alert_service
-    
     try:
-        # Initialize alert service
-        try:
-            alert_service = FallDetectionAlerts(ALERT_CONFIG)
-            LOGGER.info("✅ Fall detection alert service initialized")
-        except Exception as e:
-            LOGGER.error(f"⚠️ Failed to initialize alert service: {e}")
-            LOGGER.warning("⚠️ Continuing without alerts - detections will still be logged")
-        
         # Connect to robot
         LOGGER.info("Connecting to Viam robot...")
         robot = await connect_to_robot()
