@@ -57,6 +57,10 @@ ALERT_CONFIG = {
     'rigguardian_webhook_url': os.environ.get('RIGGUARDIAN_WEBHOOK_URL', 'https://building-sensor-platform-production.up.railway.app/webhook/fall-alert')
 }
 
+# Monitoring configuration (seconds between cycles, retry behavior)
+MONITORING_INTERVAL_SECONDS = int(os.environ.get("MONITORING_INTERVAL_SECONDS", "15"))
+MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "3"))
+
 # Initialize Roboflow client
 client = InferenceHTTPClient(
     api_url=INFERENCE_SERVER_URL,
@@ -329,41 +333,84 @@ async def process_camera(robot: RobotClient, camera_name: str):
         return []
 
 async def main():
-    """Main execution function."""
+    """Continuous monitoring main loop: initialize once, then run cycles."""
+    global alert_service
+
+    robot = None
+    retry_count = 0
+
     try:
-        # Connect to robot
+        # Connect to robot once
         LOGGER.info("Connecting to Viam robot...")
         robot = await connect_to_robot()
         LOGGER.info("Connected to robot successfully")
-        
-        # Get camera names
+
+        # Get camera names once
         camera_names = await get_camera_names(robot)
         LOGGER.info(f"Available cameras: {camera_names}")
-        
+
         if not camera_names:
             LOGGER.error("No cameras found!")
             return
-        
-        # Process each camera
-        all_detections = {}
-        for camera_name in camera_names:
-            detections = await process_camera(robot, camera_name)
-            all_detections[camera_name] = detections
-        
-        # Summary
-        LOGGER.info("\n" + "="*50)
-        LOGGER.info("DETECTION SUMMARY")
-        LOGGER.info("="*50)
-        for camera_name, detections in all_detections.items():
-            fall_count = sum(1 for d in detections if d["is_fall"])
-            LOGGER.info(f"{camera_name}: {len(detections)} detections, {fall_count} falls")
-        
-        # Close connection
-        await robot.close()
-        LOGGER.info("Robot connection closed")
-        
+
+        iteration = 0
+        LOGGER.info(f"Starting continuous monitoring (interval={MONITORING_INTERVAL_SECONDS}s)")
+
+        while True:
+            iteration += 1
+            LOGGER.info("\n" + "="*60)
+            LOGGER.info(f"MONITORING CYCLE #{iteration}")
+            LOGGER.info("="*60)
+
+            try:
+                all_detections = {}
+                for camera_name in camera_names:
+                    detections = await process_camera(robot, camera_name)
+                    all_detections[camera_name] = detections
+
+                # Summary for this cycle
+                LOGGER.info("\n" + "="*50)
+                LOGGER.info(f"CYCLE #{iteration} SUMMARY")
+                LOGGER.info("="*50)
+                for camera_name, detections in all_detections.items():
+                    fall_count = sum(1 for d in detections if d.get("is_fall"))
+                    LOGGER.info(f"{camera_name}: {len(detections)} detections, {fall_count} falls")
+
+                retry_count = 0
+
+            except Exception as e:
+                LOGGER.error(f"Error during monitoring cycle #{iteration}: {e}", exc_info=True)
+                retry_count += 1
+
+                if retry_count >= MAX_RETRIES:
+                    LOGGER.error(f"Max retries ({MAX_RETRIES}) reached. Attempting to reconnect...")
+                    try:
+                        if robot:
+                            await robot.close()
+                        robot = await connect_to_robot()
+                        camera_names = await get_camera_names(robot)
+                        LOGGER.info("Reconnected to robot successfully")
+                        retry_count = 0
+                    except Exception as reconnect_err:
+                        LOGGER.error(f"Failed to reconnect: {reconnect_err}", exc_info=True)
+                        LOGGER.error("Exiting so supervisor can restart the process")
+                        raise
+
+            LOGGER.info(f"Waiting {MONITORING_INTERVAL_SECONDS}s until next cycle...")
+            await asyncio.sleep(MONITORING_INTERVAL_SECONDS)
+
+    except asyncio.CancelledError:
+        LOGGER.info("Shutdown requested")
     except Exception as e:
-        LOGGER.error(f"Error in main: {e}", exc_info=True)
+        LOGGER.error(f"Fatal error in main: {e}", exc_info=True)
+        raise
+    finally:
+        if robot:
+            try:
+                await robot.close()
+                LOGGER.info("Robot connection closed")
+            except Exception as e:
+                LOGGER.error(f"Error closing robot connection: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
