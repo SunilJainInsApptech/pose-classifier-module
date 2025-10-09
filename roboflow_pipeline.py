@@ -24,6 +24,7 @@ import ast
 import shutil
 import re
 import json
+from fall_detection_alerts import FallDetectionAlerts
 
 # Configure logging
 logging.basicConfig(
@@ -44,11 +45,26 @@ VIAM_API_KEY = os.environ.get("ROBOT_API_KEY")
 VIAM_API_KEY_ID = os.environ.get("ROBOT_API_KEY_ID")
 VIAM_ROBOT_ADDRESS = os.environ.get("ROBOT_ADDRESS", "sunil-desktop-main.vw6zd12zux.local.viam.cloud:8080")
 
+# Add alert configuration after Viam configuration
+ALERT_CONFIG = {
+    'twilio_account_sid': os.environ.get('TWILIO_ACCOUNT_SID'),
+    'twilio_auth_token': os.environ.get('TWILIO_AUTH_TOKEN'),
+    'twilio_from_phone': os.environ.get('TWILIO_FROM_PHONE'),
+    'twilio_to_phones': os.environ.get('TWILIO_TO_PHONES', '+19738652226'),
+    'fall_confidence_threshold': float(os.environ.get('FALL_CONFIDENCE_THRESHOLD', '0.7')),
+    'alert_cooldown_seconds': int(os.environ.get('ALERT_COOLDOWN_SECONDS', '1200')),
+    'twilio_notify_service_sid': os.environ.get('TWILIO_NOTIFY_SERVICE_SID'),
+    'rigguardian_webhook_url': os.environ.get('RIGGUARDIAN_WEBHOOK_URL', 'https://building-sensor-platform-production.up.railway.app/webhook/fall-alert')
+}
+
 # Initialize Roboflow client
 client = InferenceHTTPClient(
     api_url=INFERENCE_SERVER_URL,
     api_key=ROBOFLOW_API_KEY
 )
+
+# Initialize alert service (will be created in main)
+alert_service = None
 
 async def connect_to_robot() -> RobotClient:
     """Connect to the Viam robot."""
@@ -260,6 +276,30 @@ async def process_camera(robot: RobotClient, camera_name: str):
         for det in detections:
             LOGGER.info(f"  - {det['class']}: {det['confidence']:.2%} (Fall: {det['is_fall']})")
         
+        # Send alerts for falls
+        if alert_service:
+            for det in detections:
+                if det['is_fall']:
+                    LOGGER.info(f"🚨 Triggering fall alert for camera {camera_name}")
+                    try:
+                        await alert_service.send_fall_alert(
+                            camera_name=camera_name,
+                            alert_type="fall",
+                            person_id=det['detection_id'],
+                            confidence=det['confidence'],
+                            image=viam_img,
+                            metadata={
+                                'bbox': det['bbox'],
+                                'class': det['class'],
+                                'inference_id': results.get('inference_id'),
+                                'model_id': ROBOFLOW_MODEL_ID
+                            }
+                        )
+                    except Exception as e:
+                        LOGGER.error(f"❌ Failed to send fall alert: {e}")
+        else:
+            LOGGER.warning("⚠️ Alert service not initialized - no alerts will be sent")
+        
         return detections
         
     except Exception as e:
@@ -268,7 +308,17 @@ async def process_camera(robot: RobotClient, camera_name: str):
 
 async def main():
     """Main execution function."""
+    global alert_service
+    
     try:
+        # Initialize alert service
+        try:
+            alert_service = FallDetectionAlerts(ALERT_CONFIG)
+            LOGGER.info("✅ Fall detection alert service initialized")
+        except Exception as e:
+            LOGGER.error(f"⚠️ Failed to initialize alert service: {e}")
+            LOGGER.warning("⚠️ Continuing without alerts - detections will still be logged")
+        
         # Connect to robot
         LOGGER.info("Connecting to Viam robot...")
         robot = await connect_to_robot()
