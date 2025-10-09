@@ -17,6 +17,7 @@ from viam.media.video import ViamImage
 from inference_sdk import InferenceHTTPClient
 import numpy as np
 import cv2
+import requests
 
 # Configure logging
 logging.basicConfig(
@@ -25,10 +26,12 @@ logging.basicConfig(
 )
 LOGGER = logging.getLogger(__name__)
 
-# Roboflow Configuration
-ROBOFLOW_API_KEY = os.environ.get("ROBOFLOW_API_KEY", "your_api_key_here")
-ROBOFLOW_MODEL_ID = "fall-detection-yg1ru/3"
-INFERENCE_SERVER_URL = "http://localhost:9001"  # Default Roboflow inference server
+# Roboflow Configuration (require env var)
+ROBOFLOW_API_KEY = os.environ.get("ROBOFLOW_API_KEY")
+if not ROBOFLOW_API_KEY:
+    raise SystemExit("ROBOFLOW_API_KEY not set. export ROBOFLOW_API_KEY=<key> and retry.")
+ROBOFLOW_MODEL_ID = os.environ.get("ROBOFLOW_MODEL_ID", "fall-detection-yg1ru/3")
+INFERENCE_SERVER_URL = os.environ.get("INFERENCE_SERVER_URL", "http://localhost:9001")  # Default Roboflow inference server
 
 # Viam Configuration
 VIAM_API_KEY = os.environ.get("ROBOT_API_KEY")
@@ -68,25 +71,29 @@ def viam_image_to_numpy(viam_img: ViamImage) -> np.ndarray:
 
 async def run_roboflow_inference(image: np.ndarray) -> Dict:
     """
-    Run inference using Roboflow model.
-    
-    Args:
-        image: numpy array of the image
-        
-    Returns:
-        Dictionary containing detection results
+    Run inference using the local Roboflow inference server.
+    Encodes image as JPEG and uploads it in multipart form with field name 'file'.
     """
+    def _post_image(img: np.ndarray) -> Dict:
+        success, buf = cv2.imencode('.jpg', img)
+        if not success:
+            raise RuntimeError("Failed to encode image to JPEG")
+        files = {'file': ('image.jpg', buf.tobytes(), 'image/jpeg')}
+        params = {'model_id': ROBOFLOW_MODEL_ID, 'api_key': ROBOFLOW_API_KEY}
+        url = f"{INFERENCE_SERVER_URL.rstrip('/')}/model/infer"
+        resp = requests.post(url, params=params, files=files, timeout=60)
+        resp.raise_for_status()
+        return resp.json()
+
     try:
-        # Convert numpy array to the format expected by Roboflow
-        # Roboflow expects BGR format (OpenCV default)
-        result = client.infer(image, model_id=ROBOFLOW_MODEL_ID)
-        
+        result = await asyncio.to_thread(_post_image, image)
         LOGGER.info(f"Roboflow inference complete. Found {len(result.get('predictions', []))} predictions")
         return result
-        
+    except requests.exceptions.RequestException as e:
+        LOGGER.error(f"HTTP error during Roboflow inference: {e}")
     except Exception as e:
         LOGGER.error(f"Error during Roboflow inference: {e}")
-        return {"predictions": []}
+    return {"predictions": []}
 
 def process_roboflow_results(results: Dict, confidence_threshold: float = 0.5) -> List[Dict]:
     """
