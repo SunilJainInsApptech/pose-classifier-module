@@ -95,7 +95,6 @@ async def run_roboflow_inference(image: np.ndarray) -> Dict:
         # write temp file
         with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tf:
             tmp_path = tf.name
-            # cv2.imwrite returns True/False
             if not cv2.imwrite(tmp_path, img):
                 raise RuntimeError("Failed to write temp image")
         try:
@@ -106,19 +105,41 @@ async def run_roboflow_inference(image: np.ndarray) -> Dict:
                 "--api-key", ROBOFLOW_API_KEY,
                 "--host", INFERENCE_SERVER_URL
             ]
-            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-            out = proc.stdout.strip()
-            err = proc.stderr.strip()
-            if proc.returncode != 0:
-                raise RuntimeError(f"inference CLI failed (rc={proc.returncode}): {err or out}")
-            # CLI prints a Python dict-like repr (see your example). Use ast.literal_eval to parse safely.
-            try:
-                result = ast.literal_eval(out)
-            except Exception:
-                # fallback: try to parse JSON if CLI produced JSON
-                import json
-                result = json.loads(out)
-            return result
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+            out = (proc.stdout or "").strip()
+            err = (proc.stderr or "").strip()
+            LOGGER.debug("inference CLI returncode=%s stdout=%s stderr=%s", proc.returncode, out[:1000], err[:1000])
+
+            if proc.returncode != 0 and not out:
+                # If CLI failed and produced no stdout, include stderr in the error to debug
+                raise RuntimeError(f"inference CLI failed (rc={proc.returncode}). stderr: {err}")
+
+            # Try parsing stdout first
+            if out:
+                try:
+                    import json
+                    return json.loads(out)
+                except Exception:
+                    try:
+                        return ast.literal_eval(out)
+                    except Exception:
+                        # fallback to trying stderr if stdout isn't parseable
+                        pass
+
+            # Try parsing stderr (some CLI versions print result to stderr)
+            if err:
+                try:
+                    import json
+                    return json.loads(err)
+                except Exception:
+                    try:
+                        return ast.literal_eval(err)
+                    except Exception:
+                        pass
+
+            # No parseable output found
+            raise RuntimeError(f"inference CLI produced no parseable output. rc={proc.returncode}, stdout_len={len(out)}, stderr_len={len(err)}. Full stderr: {err}")
+
         finally:
             try:
                 os.remove(tmp_path)
@@ -126,13 +147,11 @@ async def run_roboflow_inference(image: np.ndarray) -> Dict:
                 pass
 
     try:
-        # Prefer CLI if installed (lets the server handle model download and avoids HTTP multipart issues)
         if shutil.which("inference"):
             result = await asyncio.to_thread(_run_cli, image)
             LOGGER.info(f"Roboflow inference via CLI complete. Found {len(result.get('predictions', []))} predictions")
             return result
 
-        # otherwise fall back to HTTP POST
         result = await asyncio.to_thread(_post_http, image)
         LOGGER.info(f"Roboflow inference via HTTP complete. Found {len(result.get('predictions', []))} predictions")
         return result
