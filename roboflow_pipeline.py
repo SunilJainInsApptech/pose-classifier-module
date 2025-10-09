@@ -22,6 +22,8 @@ import subprocess
 import tempfile
 import ast
 import shutil
+import re
+import json
 
 # Configure logging
 logging.basicConfig(
@@ -76,9 +78,8 @@ def viam_image_to_numpy(viam_img: ViamImage) -> np.ndarray:
 async def run_roboflow_inference(image: np.ndarray) -> Dict:
     """
     Run inference using local Roboflow inference server.
-    - If the `inference` CLI is available, run: `inference infer -i <file> -m <model> --api-key <key> --host <server>`
-      and parse the CLI output.
-    - Otherwise, post the image to the local HTTP endpoint (multipart 'file').
+    Prefer CLI if available; otherwise fall back to HTTP POST.
+    Robustly parse CLI output even if there are warnings/progress lines.
     """
     def _post_http(img: np.ndarray) -> Dict:
         success, buf = cv2.imencode('.jpg', img)
@@ -92,12 +93,12 @@ async def run_roboflow_inference(image: np.ndarray) -> Dict:
         return resp.json()
 
     def _run_cli(img: np.ndarray) -> Dict:
-        # write temp file
         with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tf:
             tmp_path = tf.name
+        try:
             if not cv2.imwrite(tmp_path, img):
                 raise RuntimeError("Failed to write temp image")
-        try:
+
             cmd = [
                 "inference", "infer",
                 "-i", tmp_path,
@@ -108,38 +109,52 @@ async def run_roboflow_inference(image: np.ndarray) -> Dict:
             proc = subprocess.run(cmd, capture_output=True, text=True)
             out = (proc.stdout or "").strip()
             err = (proc.stderr or "").strip()
-            LOGGER.debug("inference CLI returncode=%s stdout=%s stderr=%s", proc.returncode, out[:1000], err[:1000])
+            LOGGER.debug("inference CLI rc=%s stdout_len=%d stderr_len=%d", proc.returncode, len(out), len(err))
 
-            if proc.returncode != 0 and not out:
-                # If CLI failed and produced no stdout, include stderr in the error to debug
-                raise RuntimeError(f"inference CLI failed (rc={proc.returncode}). stderr: {err}")
-
-            # Try parsing stdout first
-            if out:
+            # Try direct parse first
+            for candidate in (out, err):
+                if not candidate:
+                    continue
                 try:
-                    import json
-                    return json.loads(out)
+                    return json.loads(candidate)
                 except Exception:
-                    try:
-                        return ast.literal_eval(out)
-                    except Exception:
-                        # fallback to trying stderr if stdout isn't parseable
-                        pass
-
-            # Try parsing stderr (some CLI versions print result to stderr)
-            if err:
+                    pass
                 try:
-                    import json
-                    return json.loads(err)
+                    return ast.literal_eval(candidate)
                 except Exception:
-                    try:
-                        return ast.literal_eval(err)
-                    except Exception:
-                        pass
+                    pass
 
-            # No parseable output found
-            raise RuntimeError(f"inference CLI produced no parseable output. rc={proc.returncode}, stdout_len={len(out)}, stderr_len={len(err)}. Full stderr: {err}")
+            # Robust fallback: extract the last {...} or [...] block from combined output
+            combined = out + "\n" + err
+            payload = None
+            # try to find last {...}
+            start = combined.rfind('{')
+            end = combined.rfind('}')
+            if start != -1 and end != -1 and start < end:
+                payload = combined[start:end+1].strip()
+            else:
+                # try last [...]
+                start = combined.rfind('[')
+                end = combined.rfind(']')
+                if start != -1 and end != -1 and start < end:
+                    payload = combined[start:end+1].strip()
 
+            if payload:
+                try:
+                    return json.loads(payload)
+                except Exception:
+                    pass
+                try:
+                    return ast.literal_eval(payload)
+                except Exception:
+                    pass
+
+            # Nothing parseable found — raise with captured output for debugging
+            raise RuntimeError(
+                "inference CLI produced no parseable output. "
+                f"rc={proc.returncode}, stdout_len={len(out)}, stderr_len={len(err)}. "
+                f"stdout[:500]={out[:500]!r} stderr[:500]={err[:500]!r}"
+            )
         finally:
             try:
                 os.remove(tmp_path)
