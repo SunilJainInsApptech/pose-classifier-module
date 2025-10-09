@@ -111,18 +111,35 @@ async def run_roboflow_inference(image: np.ndarray) -> Dict:
             err = (proc.stderr or "").strip()
             LOGGER.debug("inference CLI rc=%s stdout_len=%d stderr_len=%d", proc.returncode, len(out), len(err))
 
-            # Try direct parse first
-            for candidate in (out, err):
-                if not candidate:
-                    continue
-                try:
-                    return json.loads(candidate)
-                except Exception:
-                    pass
-                try:
-                    return ast.literal_eval(candidate)
-                except Exception:
-                    pass
+            # Try parsing the last non-empty line from stdout (CLI prints status lines then the JSON/dict)
+            if out:
+                for line in reversed(out.splitlines()):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        return json.loads(line)
+                    except Exception:
+                        pass
+                    try:
+                        return ast.literal_eval(line)
+                    except Exception:
+                        pass
+
+            # Try parsing stderr line-by-line
+            if err:
+                for line in reversed(err.splitlines()):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        return json.loads(line)
+                    except Exception:
+                        pass
+                    try:
+                        return ast.literal_eval(line)
+                    except Exception:
+                        pass
 
             # Robust fallback: extract the last {...} or [...] block from combined output
             combined = out + "\n" + err
