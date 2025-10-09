@@ -97,21 +97,9 @@ def viam_image_to_numpy(viam_img: ViamImage) -> np.ndarray:
 
 async def run_roboflow_inference(image: np.ndarray) -> Dict:
     """
-    Run inference using local Roboflow inference server.
-    Prefer CLI if available; otherwise fall back to HTTP POST.
-    Robustly parse CLI output even if there are warnings/progress lines.
+    Run inference using the local Roboflow inference CLI only.
+    Returns a dict with at least a 'predictions' key.
     """
-    def _post_http(img: np.ndarray) -> Dict:
-        success, buf = cv2.imencode('.jpg', img)
-        if not success:
-            raise RuntimeError("Failed to encode image to JPEG")
-        files = {'file': ('image.jpg', buf.tobytes(), 'image/jpeg')}
-        params = {'model_id': ROBOFLOW_MODEL_ID, 'api_key': ROBOFLOW_API_KEY}
-        url = f"{INFERENCE_SERVER_URL.rstrip('/')}/model/infer"
-        resp = requests.post(url, params=params, files=files, timeout=60)
-        resp.raise_for_status()
-        return resp.json()
-
     def _run_cli(img: np.ndarray) -> Dict:
         with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tf:
             tmp_path = tf.name
@@ -146,7 +134,7 @@ async def run_roboflow_inference(image: np.ndarray) -> Dict:
                     except Exception:
                         pass
 
-            # Try parsing stderr line-by-line
+            # Try parsing stderr line-by-line as fallback
             if err:
                 for line in reversed(err.splitlines()):
                     line = line.strip()
@@ -164,13 +152,11 @@ async def run_roboflow_inference(image: np.ndarray) -> Dict:
             # Robust fallback: extract the last {...} or [...] block from combined output
             combined = out + "\n" + err
             payload = None
-            # try to find last {...}
             start = combined.rfind('{')
             end = combined.rfind('}')
             if start != -1 and end != -1 and start < end:
                 payload = combined[start:end+1].strip()
             else:
-                # try last [...]
                 start = combined.rfind('[')
                 end = combined.rfind(']')
                 if start != -1 and end != -1 and start < end:
@@ -186,7 +172,6 @@ async def run_roboflow_inference(image: np.ndarray) -> Dict:
                 except Exception:
                     pass
 
-            # Nothing parseable found — raise with captured output for debugging
             raise RuntimeError(
                 "inference CLI produced no parseable output. "
                 f"rc={proc.returncode}, stdout_len={len(out)}, stderr_len={len(err)}. "
@@ -198,21 +183,17 @@ async def run_roboflow_inference(image: np.ndarray) -> Dict:
             except Exception:
                 pass
 
+    if not shutil.which("inference"):
+        LOGGER.error("inference CLI not found in PATH. Install the Roboflow CLI and ensure it's available to the process.")
+        return {"predictions": []}
+
     try:
-        if shutil.which("inference"):
-            result = await asyncio.to_thread(_run_cli, image)
-            LOGGER.info(f"Roboflow inference via CLI complete. Found {len(result.get('predictions', []))} predictions")
-            return result
-
-        result = await asyncio.to_thread(_post_http, image)
-        LOGGER.info(f"Roboflow inference via HTTP complete. Found {len(result.get('predictions', []))} predictions")
+        result = await asyncio.to_thread(_run_cli, image)
+        LOGGER.info(f"Roboflow inference via CLI complete. Found {len(result.get('predictions', []))} predictions")
         return result
-
-    except requests.exceptions.RequestException as e:
-        LOGGER.error(f"HTTP error during Roboflow inference: {e}")
     except Exception as e:
-        LOGGER.error(f"Error during Roboflow inference: {e}")
-    return {"predictions": []}
+        LOGGER.error(f"Error during Roboflow inference (CLI): {e}")
+        return {"predictions": []}
 
 def process_roboflow_results(results: Dict, confidence_threshold: float = 0.5) -> List[Dict]:
     """
