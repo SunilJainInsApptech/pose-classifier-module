@@ -18,6 +18,10 @@ from inference_sdk import InferenceHTTPClient
 import numpy as np
 import cv2
 import requests
+import subprocess
+import tempfile
+import ast
+import shutil
 
 # Configure logging
 logging.basicConfig(
@@ -71,10 +75,12 @@ def viam_image_to_numpy(viam_img: ViamImage) -> np.ndarray:
 
 async def run_roboflow_inference(image: np.ndarray) -> Dict:
     """
-    Run inference using the local Roboflow inference server.
-    Encodes image as JPEG and uploads it in multipart form with field name 'file'.
+    Run inference using local Roboflow inference server.
+    - If the `inference` CLI is available, run: `inference infer -i <file> -m <model> --api-key <key> --host <server>`
+      and parse the CLI output.
+    - Otherwise, post the image to the local HTTP endpoint (multipart 'file').
     """
-    def _post_image(img: np.ndarray) -> Dict:
+    def _post_http(img: np.ndarray) -> Dict:
         success, buf = cv2.imencode('.jpg', img)
         if not success:
             raise RuntimeError("Failed to encode image to JPEG")
@@ -85,10 +91,52 @@ async def run_roboflow_inference(image: np.ndarray) -> Dict:
         resp.raise_for_status()
         return resp.json()
 
+    def _run_cli(img: np.ndarray) -> Dict:
+        # write temp file
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tf:
+            tmp_path = tf.name
+            # cv2.imwrite returns True/False
+            if not cv2.imwrite(tmp_path, img):
+                raise RuntimeError("Failed to write temp image")
+        try:
+            cmd = [
+                "inference", "infer",
+                "-i", tmp_path,
+                "-m", ROBOFLOW_MODEL_ID,
+                "--api-key", ROBOFLOW_API_KEY,
+                "--host", INFERENCE_SERVER_URL
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            out = proc.stdout.strip()
+            err = proc.stderr.strip()
+            if proc.returncode != 0:
+                raise RuntimeError(f"inference CLI failed (rc={proc.returncode}): {err or out}")
+            # CLI prints a Python dict-like repr (see your example). Use ast.literal_eval to parse safely.
+            try:
+                result = ast.literal_eval(out)
+            except Exception:
+                # fallback: try to parse JSON if CLI produced JSON
+                import json
+                result = json.loads(out)
+            return result
+        finally:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
     try:
-        result = await asyncio.to_thread(_post_image, image)
-        LOGGER.info(f"Roboflow inference complete. Found {len(result.get('predictions', []))} predictions")
+        # Prefer CLI if installed (lets the server handle model download and avoids HTTP multipart issues)
+        if shutil.which("inference"):
+            result = await asyncio.to_thread(_run_cli, image)
+            LOGGER.info(f"Roboflow inference via CLI complete. Found {len(result.get('predictions', []))} predictions")
+            return result
+
+        # otherwise fall back to HTTP POST
+        result = await asyncio.to_thread(_post_http, image)
+        LOGGER.info(f"Roboflow inference via HTTP complete. Found {len(result.get('predictions', []))} predictions")
         return result
+
     except requests.exceptions.RequestException as e:
         LOGGER.error(f"HTTP error during Roboflow inference: {e}")
     except Exception as e:
