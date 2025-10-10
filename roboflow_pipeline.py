@@ -69,6 +69,8 @@ client = InferenceHTTPClient(
 
 # Initialize alert service (will be created on first fall detection)
 alert_service = None
+_alert_service_lock = asyncio.Lock()
+_alert_service_disabled = False
 
 async def connect_to_robot() -> RobotClient:
     """Connect to the Viam robot."""
@@ -237,20 +239,45 @@ def process_roboflow_results(results: Dict, confidence_threshold: float = 0.5) -
     return detections
 
 async def get_or_create_alert_service():
-    """Lazy initialize alert service on first fall detection."""
-    global alert_service
-    
+    """Lazy, atomic initialize alert service on first fall detection.
+    Uses a lock to prevent concurrent initializations and a disabled flag
+    to avoid repeated retries when required config is missing.
+    """
+    global alert_service, _alert_service_disabled
+
+    if _alert_service_disabled:
+        return None
+
     if alert_service is not None:
         return alert_service
-    
-    try:
-        LOGGER.info("🔔 Initializing fall detection alert service (first fall detected)...")
-        alert_service = FallDetectionAlerts(ALERT_CONFIG)
-        LOGGER.info("✅ Fall detection alert service initialized")
-        return alert_service
-    except Exception as e:
-        LOGGER.error(f"❌ Failed to initialize alert service: {e}")
-        return None
+
+    async with _alert_service_lock:
+        # double-check after acquiring lock
+        if _alert_service_disabled:
+            return None
+        if alert_service is not None:
+            return alert_service
+
+        try:
+            LOGGER.info("🔔 Initializing fall detection alert service (first fall detected)...")
+
+            # Basic quick validation to avoid repeated failed inits caused by missing config
+            required = ("twilio_account_sid", "twilio_auth_token", "twilio_from_phone")
+            missing = [k for k in required if not ALERT_CONFIG.get(k)]
+            if missing:
+                _alert_service_disabled = True
+                LOGGER.error("❌ Missing required Twilio configuration: %s", ", ".join(missing))
+                return None
+
+            alert_service = FallDetectionAlerts(ALERT_CONFIG)
+            LOGGER.info("✅ Fall detection alert service initialized")
+            return alert_service
+
+        except Exception as e:
+            # If initialization fails for a recoverable reason, log once and disable further tries for now.
+            LOGGER.error("❌ Failed to initialize alert service: %s", e)
+            _alert_service_disabled = True
+            return None
 
 async def process_camera(robot: RobotClient, camera_name: str):
     """Process a single camera feed."""
