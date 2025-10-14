@@ -25,6 +25,11 @@ import shutil
 import re
 import json
 from fall_detection_alerts import FallDetectionAlerts
+from after_hours_detection_alerts import AfterHoursDetectionAlerts
+from datetime import datetime
+
+# New imports for dynamic load of the copy module
+import importlib.util
 
 # Configure logging
 logging.basicConfig(
@@ -57,6 +62,18 @@ ALERT_CONFIG = {
     'rigguardian_webhook_url': os.environ.get('RIGGUARDIAN_WEBHOOK_URL', 'https://building-sensor-platform-production.up.railway.app/webhook/fall-alert')
 }
 
+# New: cameras that should trigger a after hours alert when a "person" is detected
+AFTER_HOURS_CAMERAS = {
+    "Services_Area",
+    "Service_Staircase_Top",
+    "Elevator_South",
+    "Courtyard_1",
+    "Service_Staircase_Bottom",
+    "Courtyard_2",
+    "North_Elevator",
+    "South_Elevator",
+}
+
 # Monitoring configuration (seconds between cycles, retry behavior)
 MONITORING_INTERVAL_SECONDS = int(os.environ.get("MONITORING_INTERVAL_SECONDS", "15"))
 MAX_RETRIES = int(os.environ.get("MAX_RETRIES", "3"))
@@ -71,6 +88,11 @@ client = InferenceHTTPClient(
 alert_service = None
 _alert_service_lock = asyncio.Lock()
 _alert_service_disabled = False
+
+# New: after hours alert service globals (lazy init)
+after_hours_alert_service = None
+_after_hours_alert_service_lock = asyncio.Lock()
+_after_hours_alert_service_disabled = False
 
 async def connect_to_robot() -> RobotClient:
     """Connect to the Viam robot."""
@@ -279,6 +301,63 @@ async def get_or_create_alert_service():
             _alert_service_disabled = True
             return None
 
+# New: lazy loader for the after hours alert service using the "fall_detection_alerts copy.py" file
+async def get_or_create_after_hours_service():
+    """Lazy initialize a AfterHoursDetectionAlerts service from the 'fall_detection_alerts copy.py' file."""
+    global after_hours_alert_service, _after_hours_alert_service_disabled
+
+    if _after_hours_alert_service_disabled:
+        return None
+
+    if after_hours_alert_service is not None:
+        return after_hours_alert_service
+
+    async with _after_hours_alert_service_lock:
+        if _after_hours_alert_service_disabled:
+            return None
+        if after_hours_alert_service is not None:
+            return after_hours_alert_service
+
+        try:
+            LOGGER.info("🔔 Initializing after hours alert service (first after hours detection detected)...")
+
+            required = ("twilio_account_sid", "twilio_auth_token", "twilio_from_phone")
+            missing = [k for k in required if not ALERT_CONFIG.get(k)]
+            if missing:
+                _after_hours_alert_service_disabled = True
+                LOGGER.error("❌ Missing required Twilio configuration for after hours alerts: %s", ", ".join(missing))
+                return None
+
+            # Dynamically load the copy file (filename contains a space) so we don't rely on import name
+            module_path = os.path.join(os.path.dirname(__file__), "after_hours_detection_alerts.py")
+            if not os.path.exists(module_path):
+                LOGGER.error("❌ After hours alerts module not found at %s", module_path)
+                _after_hours_alert_service_disabled = True
+                return None
+
+            spec = importlib.util.spec_from_file_location("after_hours_detection_alerts", module_path)
+            if spec is None or spec.loader is None:
+                LOGGER.error("❌ Could not create module spec or loader for %s", module_path)
+                _after_hours_alert_service_disabled = True
+                return None
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+
+            AfterHoursDetectionAlerts = getattr(mod, "AfterHoursDetectionAlerts", None)
+            if AfterHoursDetectionAlerts is None:
+                LOGGER.error("❌ AfterHoursDetectionAlerts class not found in %s", module_path)
+                _after_hours_alert_service_disabled = True
+                return None
+
+            after_hours_alert_service = AfterHoursDetectionAlerts(ALERT_CONFIG)
+            LOGGER.info("✅ After hours alert service initialized")
+            return after_hours_alert_service
+
+        except Exception as e:
+            LOGGER.error("❌ Failed to initialize after hours alert service: %s", e)
+            _after_hours_alert_service_disabled = True
+            return None
+
 async def process_camera(robot: RobotClient, camera_name: str):
     """Process a single camera feed."""
     try:
@@ -333,7 +412,45 @@ async def process_camera(robot: RobotClient, camera_name: str):
                         LOGGER.error(f"❌ Failed to send fall alert: {e}")
                 else:
                     LOGGER.error("⚠️ Alert service failed to initialize - alert not sent")
-        
+
+        # NEW: Send after hours alerts for "person" detections coming from whitelisted cameras
+        #      ONLY between 23:00 and 06:00.
+        current_hour = datetime.now().hour
+        is_after_hours = current_hour >= 23 or current_hour < 6
+
+        if is_after_hours:
+            for det in detections:
+                try:
+                    if det.get("class", "").lower() == "person" and camera_name in AFTER_HOURS_CAMERAS:
+                        LOGGER.info(f"🔔 After hours (person) detected on whitelisted camera {camera_name}")
+                        pservice = await get_or_create_after_hours_service()
+                        if pservice:
+                            try:
+                                await pservice.send_after_hours_alert(
+                                    camera_name=camera_name,
+                                    alert_type="after_hours",
+                                    person_id=det.get("detection_id", ""),
+                                    confidence=det.get("confidence", 0.0),
+                                    image=viam_img,
+                                    metadata={
+                                        'bbox': det['bbox'],
+                                        'class': det['class'],
+                                        'inference_id': results.get('inference_id'),
+                                        'model_id': ROBOFLOW_MODEL_ID
+                                    }
+                                )
+                                LOGGER.info("✅ After hours detection alert sent successfully")
+                            except Exception as e:
+                                LOGGER.error(f"❌ Failed to send after hours alert: {e}")
+                        else:
+                            LOGGER.error("⚠️ After hours alert service failed to initialize - alert not sent")
+                except Exception as e:
+                    LOGGER.error(f"Error while handling after hours alert logic: {e}")
+        else:
+            # Optional: Log that a person was detected but it's not after hours
+            if any(d.get("class", "").lower() == "person" and camera_name in AFTER_HOURS_CAMERAS for d in detections):
+                LOGGER.info(f"Person detected on {camera_name}, but it is not after hours. Skipping alert.")
+
         return detections
         
     except Exception as e:
