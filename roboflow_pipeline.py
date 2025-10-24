@@ -143,102 +143,20 @@ def viam_image_to_numpy(viam_img: ViamImage) -> np.ndarray:
 
 async def run_roboflow_inference(image: np.ndarray) -> Dict:
     """
-    Run inference using the local Roboflow inference CLI only.
+    Run inference using the Roboflow HTTP client.
     Returns a dict with at least a 'predictions' key.
     """
-    def _run_cli(img: np.ndarray) -> Dict:
-        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tf:
-            tmp_path = tf.name
-        try:
-            if not cv2.imwrite(tmp_path, img):
-                raise RuntimeError("Failed to write temp image")
-
-            cmd = [
-                "inference", "infer",
-                "-i", tmp_path,
-                "-m", ROBOFLOW_MODEL_ID,
-                "--api-key", ROBOFLOW_API_KEY,
-                "--host", INFERENCE_SERVER_URL
-            ]
-            proc = subprocess.run(cmd, capture_output=True, text=True)
-            out = (proc.stdout or "").strip()
-            err = (proc.stderr or "").strip()
-            LOGGER.debug("inference CLI rc=%s stdout_len=%d stderr_len=%d", proc.returncode, len(out), len(err))
-
-            # Try parsing the last non-empty line from stdout (CLI prints status lines then the JSON/dict)
-            if out:
-                for line in reversed(out.splitlines()):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        return json.loads(line)
-                    except Exception:
-                        pass
-                    try:
-                        return ast.literal_eval(line)
-                    except Exception:
-                        pass
-
-            # Try parsing stderr line-by-line as fallback
-            if err:
-                for line in reversed(err.splitlines()):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        return json.loads(line)
-                    except Exception:
-                        pass
-                    try:
-                        return ast.literal_eval(line)
-                    except Exception:
-                        pass
-
-            # Robust fallback: extract the last {...} or [...] block from combined output
-            combined = out + "\n" + err
-            payload = None
-            start = combined.rfind('{')
-            end = combined.rfind('}')
-            if start != -1 and end != -1 and start < end:
-                payload = combined[start:end+1].strip()
-            else:
-                start = combined.rfind('[')
-                end = combined.rfind(']')
-                if start != -1 and end != -1 and start < end:
-                    payload = combined[start:end+1].strip()
-
-            if payload:
-                try:
-                    return json.loads(payload)
-                except Exception:
-                    pass
-                try:
-                    return ast.literal_eval(payload)
-                except Exception:
-                    pass
-
-            raise RuntimeError(
-                "inference CLI produced no parseable output. "
-                f"rc={proc.returncode}, stdout_len={len(out)}, stderr_len={len(err)}. "
-                f"stdout[:500]={out[:500]!r} stderr[:500]={err[:500]!r}"
-            )
-        finally:
-            try:
-                os.remove(tmp_path)
-            except Exception:
-                pass
-
-    if not shutil.which("inference"):
-        LOGGER.error("inference CLI not found in PATH. Install the Roboflow CLI and ensure it's available to the process.")
-        return {"predictions": []}
-
     try:
-        result = await asyncio.to_thread(_run_cli, image)
-        LOGGER.info(f"Roboflow inference via CLI complete. Found {len(result.get('predictions', []))} predictions")
+        # The client is already initialized globally
+        result = await asyncio.to_thread(
+            client.infer, 
+            image, 
+            model_id=ROBOFLOW_MODEL_ID
+        )
+        LOGGER.info(f"Roboflow inference via HTTP client complete. Found {len(result.get('predictions', []))} predictions")
         return result
     except Exception as e:
-        LOGGER.error(f"Error during Roboflow inference (CLI): {e}")
+        LOGGER.error(f"Error during Roboflow inference (HTTP): {e}")
         return {"predictions": []}
 
 def process_roboflow_results(results: Dict, confidence_threshold: float = 0.5) -> List[Dict]:
