@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from typing import Dict, Optional, AsyncGenerator
+from contextlib import asynccontextmanager
 
 import cv2
 import numpy as np
@@ -62,7 +63,25 @@ def capture_rtsp_frame_sync(stream_name: str) -> Optional[np.ndarray]:
     return frame
 
 # --- FastAPI Application ---
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Handles application startup and shutdown events.
+    """
+    # Startup logic can go here if needed
+    yield
+    # Shutdown logic
+    LOGGER.info("Shutdown event received. Releasing all stream captures...")
+    global _caps
+    for cam_name, cap in _caps.items():
+        if cap and cap.isOpened():
+            LOGGER.info(f"Releasing capture for {cam_name}")
+            cap.release()
+    cv2.destroyAllWindows()
+    LOGGER.info("All stream captures released.")
+
+app = FastAPI(lifespan=lifespan)
 
 async def stream_generator(camera_name: str) -> AsyncGenerator[bytes, None]:
     """
@@ -125,19 +144,3 @@ async def get_frame(camera_name: str):
         raise HTTPException(status_code=500, detail="Failed to encode frame to JPEG")
 
     return Response(content=buffer.tobytes(), media_type="image/jpeg")
-
-@app.on_event("shutdown")
-def shutdown_event():
-    """Release all cv2.VideoCapture objects on exit."""
-    LOGGER.info("Shutdown event received. Releasing all stream captures...")
-    for cam_name, cap in _caps.items():
-        if cap and cap.isOpened():
-            LOGGER.info(f"Releasing capture for {cam_name}")
-            cap.release()
-    cv2.destroyAllWindows()
-    LOGGER.info("All stream captures released.")
-
-if __name__ == "__main__":
-    import uvicorn
-    # Run on all available network interfaces on port 8001
-    uvicorn.run(app, host="0.0.0.0", port=8001)
