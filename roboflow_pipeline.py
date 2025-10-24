@@ -1,7 +1,7 @@
 """
 Standalone script to test the full pose pipeline using Roboflow model:
-- Connects to Viam robot
-- Captures image from camera
+- Connects to RTSP streams using OpenCV/GStreamer
+- Captures image from a stream
 - Runs inference on Roboflow model (fall-detection-yg1ru/3)
 - Extracts fall detection results directly from the model
 """
@@ -9,15 +9,11 @@ Standalone script to test the full pose pipeline using Roboflow model:
 import asyncio
 import os
 import logging
-from typing import List, Dict
-from viam.robot.client import RobotClient
-from viam.rpc.dial import Credentials, DialOptions
-from viam.components.camera import Camera
+from typing import List, Dict, Optional
 from viam.media.video import ViamImage
 from inference_sdk import InferenceHTTPClient
 import numpy as np
 import cv2
-import requests
 import subprocess
 import tempfile
 import ast
@@ -27,6 +23,7 @@ import json
 from fall_detection_alerts import FallDetectionAlerts
 from after_hours_detection_alerts import AfterHoursDetectionAlerts
 from datetime import datetime
+import httpx # Add this import
 
 # New imports for dynamic load of the copy module
 import importlib.util
@@ -45,10 +42,18 @@ if not ROBOFLOW_API_KEY:
 ROBOFLOW_MODEL_ID = os.environ.get("ROBOFLOW_MODEL_ID", "fall-detection-yg1ru/3")
 INFERENCE_SERVER_URL = os.environ.get("INFERENCE_SERVER_URL", "http://localhost:9001")  # Default Roboflow inference server
 
-# Viam Configuration
-VIAM_API_KEY = os.environ.get("ROBOT_API_KEY")
-VIAM_API_KEY_ID = os.environ.get("ROBOT_API_KEY_ID")
-VIAM_ROBOT_ADDRESS = os.environ.get("ROBOT_ADDRESS", "sunil-desktop-main.vw6zd12zux.local.viam.cloud:8080")
+# NEW: Address of the capture service running on the Jetson
+# Replace <JETSON_IP_ADDRESS> with the actual IP of your Jetson
+CAPTURE_SERVICE_URL = os.environ.get("CAPTURE_SERVICE_URL", "http://192.168.1.173:8001")
+
+# RTSP Stream Configuration (used to know which cameras to query)
+RTSP_STREAMS = {
+    'Lobby_Center_North': 'rtsp://70.19.68.121:554/chID=25&streamType=sub',
+    'CPW_Awning_N_Facing': 'rtsp://70.19.68.121:554/chID=16&streamType=sub',
+    # Add other stream names and URLs here
+}
+
+# REMOVED: GSTREAMER_PIPELINE and _caps global cache
 
 # Add alert configuration after Viam configuration
 ALERT_CONFIG = {
@@ -94,23 +99,40 @@ after_hours_alert_service = None
 _after_hours_alert_service_lock = asyncio.Lock()
 _after_hours_alert_service_disabled = False
 
-async def connect_to_robot() -> RobotClient:
-    """Connect to the Viam robot."""
-    opts = RobotClient.Options.with_api_key(
-        api_key=VIAM_API_KEY,
-        api_key_id=VIAM_API_KEY_ID
-    )
-    return await RobotClient.at_address(VIAM_ROBOT_ADDRESS, opts)
+def get_camera_names() -> List[str]:
+    """Get list of available camera names from the RTSP_STREAMS config."""
+    return list(RTSP_STREAMS.keys())
 
-async def get_camera_names(robot: RobotClient) -> List[str]:
-    """Get list of available camera names from the robot."""
-    camera_names = []
-    for resource in robot.resource_names:
-        if (resource.namespace == "rdk" and 
-            resource.type == "component" and 
-            resource.subtype == "camera"):
-            camera_names.append(resource.name)
-    return camera_names
+async def get_frame_from_capture_service(camera_name: str) -> Optional[np.ndarray]:
+    """Fetches a frame from the remote capture service."""
+    url = f"{CAPTURE_SERVICE_URL}/frame/{camera_name}"
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, timeout=10.0)
+            response.raise_for_status()  # Raise an exception for 4xx or 5xx status codes
+            
+            # Convert JPEG bytes to numpy array
+            image_bytes = await response.aread()
+            nparr = np.frombuffer(image_bytes, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            return img
+            
+    except httpx.RequestError as e:
+        LOGGER.error(f"Could not connect to capture service for {camera_name}: {e}")
+        return None
+    except httpx.HTTPStatusError as e:
+        LOGGER.error(f"Capture service returned an error for {camera_name}: {e.response.status_code} - {e.response.text}")
+        return None
+    except Exception as e:
+        LOGGER.error(f"An unexpected error occurred while fetching frame for {camera_name}: {e}")
+        return None
+
+def numpy_to_viam_image(image: np.ndarray) -> ViamImage:
+    """Converts a NumPy array (OpenCV BGR) to a ViamImage with JPEG data."""
+    is_success, buffer = cv2.imencode(".jpg", image)
+    if not is_success:
+        raise RuntimeError("Failed to encode numpy array to JPEG")
+    return ViamImage(data=buffer.tobytes(), mime_type="image/jpeg")
 
 def viam_image_to_numpy(viam_img: ViamImage) -> np.ndarray:
     """Convert ViamImage to numpy array for Roboflow inference."""
@@ -358,20 +380,22 @@ async def get_or_create_after_hours_service():
             _after_hours_alert_service_disabled = True
             return None
 
-async def process_camera(robot: RobotClient, camera_name: str):
-    """Process a single camera feed."""
+async def process_camera(camera_name: str):
+    """Process a single camera feed by fetching it from the capture service."""
     try:
-        camera = Camera.from_robot(robot, camera_name)
         LOGGER.info(f"Processing camera: {camera_name}")
         
-        # Capture image
-        viam_img = await camera.get_image()
-        LOGGER.info(f"Captured image from camera: {camera_name}")
+        # Capture image from the remote service
+        image = await get_frame_from_capture_service(camera_name)
+        if image is None:
+            LOGGER.error(f"Could not get image from camera: {camera_name}")
+            return []
         
-        # Convert to numpy array
-        image = viam_image_to_numpy(viam_img)
-        LOGGER.info(f"Image shape: {image.shape}")
+        LOGGER.info(f"Captured image from camera: {camera_name} | Shape: {image.shape}")
         
+        # Convert to ViamImage for alert functions
+        viam_img = numpy_to_viam_image(image)
+
         # Run Roboflow inference
         results = await run_roboflow_inference(image)
         
@@ -459,26 +483,16 @@ async def process_camera(robot: RobotClient, camera_name: str):
 
 async def main():
     """Continuous monitoring main loop: initialize once, then run cycles."""
-    global alert_service
-
-    robot = None
-    retry_count = 0
-
+    iteration = 0
     try:
-        # Connect to robot once
-        LOGGER.info("Connecting to Viam robot...")
-        robot = await connect_to_robot()
-        LOGGER.info("Connected to robot successfully")
-
-        # Get camera names once
-        camera_names = await get_camera_names(robot)
+        # Get camera names from config
+        camera_names = get_camera_names()
         LOGGER.info(f"Available cameras: {camera_names}")
 
         if not camera_names:
-            LOGGER.error("No cameras found!")
+            LOGGER.error("No cameras found in RTSP_STREAMS configuration!")
             return
 
-        iteration = 0
         LOGGER.info(f"Starting continuous monitoring (interval={MONITORING_INTERVAL_SECONDS}s)")
 
         while True:
@@ -487,39 +501,19 @@ async def main():
             LOGGER.info(f"MONITORING CYCLE #{iteration}")
             LOGGER.info("="*60)
 
-            try:
-                all_detections = {}
-                for camera_name in camera_names:
-                    detections = await process_camera(robot, camera_name)
-                    all_detections[camera_name] = detections
+            all_detections = {}
+            for camera_name in camera_names:
+                # The stream_url is no longer needed here
+                detections = await process_camera(camera_name)
+                all_detections[camera_name] = detections
 
-                # Summary for this cycle
-                LOGGER.info("\n" + "="*50)
-                LOGGER.info(f"CYCLE #{iteration} SUMMARY")
-                LOGGER.info("="*50)
-                for camera_name, detections in all_detections.items():
-                    fall_count = sum(1 for d in detections if d.get("is_fall"))
-                    LOGGER.info(f"{camera_name}: {len(detections)} detections, {fall_count} falls")
-
-                retry_count = 0
-
-            except Exception as e:
-                LOGGER.error(f"Error during monitoring cycle #{iteration}: {e}", exc_info=True)
-                retry_count += 1
-
-                if retry_count >= MAX_RETRIES:
-                    LOGGER.error(f"Max retries ({MAX_RETRIES}) reached. Attempting to reconnect...")
-                    try:
-                        if robot:
-                            await robot.close()
-                        robot = await connect_to_robot()
-                        camera_names = await get_camera_names(robot)
-                        LOGGER.info("Reconnected to robot successfully")
-                        retry_count = 0
-                    except Exception as reconnect_err:
-                        LOGGER.error(f"Failed to reconnect: {reconnect_err}", exc_info=True)
-                        LOGGER.error("Exiting so supervisor can restart the process")
-                        raise
+            # Summary for this cycle
+            LOGGER.info("\n" + "="*50)
+            LOGGER.info(f"CYCLE #{iteration} SUMMARY")
+            LOGGER.info("="*50)
+            for camera_name, detections in all_detections.items():
+                fall_count = sum(1 for d in detections if d.get("is_fall"))
+                LOGGER.info(f"{camera_name}: {len(detections)} detections, {fall_count} falls")
 
             LOGGER.info(f"Waiting {MONITORING_INTERVAL_SECONDS}s until next cycle...")
             await asyncio.sleep(MONITORING_INTERVAL_SECONDS)
@@ -530,12 +524,8 @@ async def main():
         LOGGER.error(f"Fatal error in main: {e}", exc_info=True)
         raise
     finally:
-        if robot:
-            try:
-                await robot.close()
-                LOGGER.info("Robot connection closed")
-            except Exception as e:
-                LOGGER.error(f"Error closing robot connection: {e}")
+        # No longer need to release cv2 captures here
+        LOGGER.info("Monitoring stopped.")
 
 if __name__ == "__main__":
     asyncio.run(main())
