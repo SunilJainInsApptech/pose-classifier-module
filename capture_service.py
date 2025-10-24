@@ -144,3 +144,8 @@ async def get_frame(camera_name: str):
         raise HTTPException(status_code=500, detail="Failed to encode frame to JPEG")
 
     return Response(content=buffer.tobytes(), media_type="image/jpeg")
+
+if __name__ == "__main__":
+    import uvicorn
+    # Run on all available network interfaces on port 8001
+    uvicorn.run(app, host="0.0.0.0", port=8001)
