@@ -83,6 +83,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+@app.get("/cameras")
+async def get_cameras():
+    """Returns a JSON array of available camera names."""
+    return list(RTSP_STREAMS.keys())
+
 async def stream_generator(camera_name: str) -> AsyncGenerator[bytes, None]:
     """
     A generator function that captures frames from the RTSP stream,
