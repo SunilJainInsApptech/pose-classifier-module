@@ -48,8 +48,8 @@ CAPTURE_SERVICE_URL = os.environ.get("CAPTURE_SERVICE_URL", "http://192.168.1.17
 
 # RTSP Stream Configuration (used to know which cameras to query)
 RTSP_STREAMS = {
-    'Lobby_Center_North': 'rtsp://70.19.68.121:554/chID=25&streamType=sub',
-    'CPW_Awning_N_Facing': 'rtsp://70.19.68.121:554/chID=16&streamType=sub',
+    'Lobby_Center_North': 'rtsp://70.19.68.121:554/chID=25&streamType=main',
+    'CPW_Awning_N_Facing': 'rtsp://70.19.68.121:554/chID=16&streamType=main',
     # Add other stream names and URLs here
 }
 

@@ -14,8 +14,8 @@ LOGGER = logging.getLogger(__name__)
 
 # --- Configuration (Should match your main script) ---
 RTSP_STREAMS = {
-    'Lobby_Center_North': 'rtsp://70.19.68.121:554/chID=25&streamType=sub',
-    'CPW_Awning_N_Facing': 'rtsp://70.19.68.121:554/chID=16&streamType=sub',
+    'Lobby_Center_North': 'rtsp://70.19.68.121:554/chID=25&streamType=main',
+    'CPW_Awning_N_Facing': 'rtsp://70.19.68.121:554/chID=16&streamType=main',
     # Add other stream names and URLs here
 }
 
