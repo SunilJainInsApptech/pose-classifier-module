@@ -4,7 +4,7 @@ import time
 # --- IMPORTANT ---
 # 1. REPLACE THIS URL with your camera's actual RTSP address
 #    (Using the one from the working gst-launch command for reference)
-RTSP_URL = "rtsp://70.19.68.121:554/chID=25&streamType=sub"
+RTSP_URL = "rtsp://70.19.68.121:554/chID=16&streamType=sub"
 
 # 2. Define the GStreamer pipeline based on your working command
 #    We replace the 'udpsink' part with the 'videoconvert' and 'appsink'
