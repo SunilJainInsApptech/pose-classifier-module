@@ -90,9 +90,11 @@ origins = [
     "http://localhost:3000",      # Local Next.js development environment
     "https://rigguardian.com",    # Production domain
     "http://rigguardian.com",     # Production domain (non-HTTPS)
+    "http://www.rigguardian.com", # ADD THIS LINE for the 'www' subdomain
+    "https://www.rigguardian.com", # ADD THIS LINE for the 'www' subdomain
     "http://building-sensor-platform.vercel.app",
     "https://building-sensor-platform.vercel.app",
-    "https://uncusped-principled-leon.ngrok-free.dev", # Add your ngrok URL here
+    "https://uncusped-principled-leon.ngrok-free.dev", # Your ngrok URL
 ]
 
 app.add_middleware(
