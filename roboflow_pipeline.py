@@ -44,7 +44,7 @@ INFERENCE_SERVER_URL = os.environ.get("INFERENCE_SERVER_URL", "http://localhost:
 
 # NEW: Address of the capture service running on the Jetson
 # Replace <JETSON_IP_ADDRESS> with the actual IP of your Jetson
-CAPTURE_SERVICE_URL = os.environ.get("CAPTURE_SERVICE_URL", "http://192.168.1.173:8001")
+CAPTURE_SERVICE_URL = os.environ.get("CAPTURE_SERVICE_URL", "http://localhost:8001")
 
 # RTSP Stream Configuration (used to know which cameras to query)
 RTSP_STREAMS = {

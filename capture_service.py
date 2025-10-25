@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -82,6 +83,26 @@ async def lifespan(app: FastAPI):
     LOGGER.info("All stream captures released.")
 
 app = FastAPI(lifespan=lifespan)
+
+# --- CORS Middleware Configuration ---
+# This allows your web app (on localhost or rigguardian.com) to make requests to this API
+origins = [
+    "http://localhost:3000",      # Local Next.js development environment
+    "https://rigguardian.com",    # Production domain
+    "http://rigguardian.com",     # Production domain (non-HTTPS)
+    "http://building-sensor-platform.vercel.app",
+    "https://building-sensor-platform.vercel.app",
+    "https://uncusped-principled-leon.ngrok-free.dev", # Add your ngrok URL here
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"], # Allows all methods (GET, POST, etc.)
+    allow_headers=["*"], # Allows all headers
+)
+
 
 @app.get("/cameras")
 async def get_cameras():
