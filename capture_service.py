@@ -46,12 +46,6 @@ def capture_rtsp_frame_sync(stream_name: str) -> Optional[np.ndarray]:
         LOGGER.info(f"Opening new stream for {stream_name}...")
         pipeline = GSTREAMER_PIPELINE.format(rtsp_url=stream_url)
         cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-
-        # Attempt to lower the resolution and framerate
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_FPS, 10) # Try 15 or 10 FPS instead of 30
-
         if not cap.isOpened():
             LOGGER.error(f"Failed to open stream: {stream_name}")
             if stream_name in _caps:
