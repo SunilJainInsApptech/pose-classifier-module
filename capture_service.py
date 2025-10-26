@@ -1,13 +1,18 @@
 import asyncio
 import logging
-from typing import Dict, Optional, AsyncGenerator
+import uuid
+from typing import Dict, Optional, AsyncGenerator, Set
 from contextlib import asynccontextmanager
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Body
 from fastapi.responses import Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+
+# New imports for WebRTC
+from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc.contrib.media import MediaStreamTrack
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -63,7 +68,38 @@ def capture_rtsp_frame_sync(stream_name: str) -> Optional[np.ndarray]:
     
     return frame
 
-# --- FastAPI Application ---
+# --- WebRTC Implementation ---
+
+# This class bridges OpenCV frames to the WebRTC video track
+class CameraVideoStreamTrack(MediaStreamTrack):
+    """
+    A video stream track that gets frames from a camera.
+    """
+    kind = "video"
+
+    def __init__(self, camera_name: str):
+        super().__init__()
+        self.camera_name = camera_name
+
+    async def recv(self):
+        # This is called by aiortc to get the next frame
+        frame = await asyncio.to_thread(capture_rtsp_frame_sync, self.camera_name)
+        
+        if frame is None:
+            # If frame capture fails, we must still provide a frame.
+            # A black frame is a good fallback.
+            frame = np.zeros((480, 640, 3), np.uint8)
+
+        # Convert the frame to a WebRTC VideoFrame
+        from av import VideoFrame
+        pts, time_base = await self.next_timestamp()
+        video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
+        video_frame.pts = pts
+        video_frame.time_base = time_base
+        return video_frame
+
+# Keep track of active peer connections
+pcs: Set[RTCPeerConnection] = set()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -72,8 +108,14 @@ async def lifespan(app: FastAPI):
     """
     # Startup logic can go here if needed
     yield
+    # --- Updated Shutdown Logic ---
+    LOGGER.info("Shutdown event received. Releasing all stream captures and closing peer connections...")
+    # Close all peer connections
+    coros = [pc.close() for pc in pcs]
+    await asyncio.gather(*coros)
+    pcs.clear()
     # Shutdown logic
-    LOGGER.info("Shutdown event received. Releasing all stream captures...")
+    LOGGER.info("Releasing all stream captures...")
     global _caps
     for cam_name, cap in _caps.items():
         if cap and cap.isOpened():
@@ -172,6 +214,45 @@ async def get_frame(camera_name: str):
         raise HTTPException(status_code=500, detail="Failed to encode frame to JPEG")
 
     return Response(content=buffer.tobytes(), media_type="image/jpeg")
+
+
+# --- New WebRTC Signaling Endpoint ---
+@app.post("/offer")
+async def offer(params: dict = Body(...)):
+    """
+    The browser sends an SDP offer to start a WebRTC connection.
+    The server responds with an SDP answer.
+    """
+    offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+    camera_name = params.get("cameraName")
+
+    if not camera_name or camera_name not in RTSP_STREAMS:
+        raise HTTPException(status_code=400, detail="Invalid camera name provided")
+
+    pc = RTCPeerConnection()
+    pc_id = f"PeerConnection({uuid.uuid4()})"
+    pcs.add(pc)
+
+    LOGGER.info(f"[{pc_id}] Creating peer connection for camera: {camera_name}")
+
+    @pc.on("connectionstatechange")
+    async def on_connectionstatechange():
+        LOGGER.info(f"[{pc_id}] Connection state is {pc.connectionState}")
+        if pc.connectionState == "failed" or pc.connectionState == "closed":
+            await pc.close()
+            pcs.discard(pc)
+            LOGGER.info(f"[{pc_id}] Peer connection closed and removed.")
+
+    # Create and add the video track
+    video_track = CameraVideoStreamTrack(camera_name)
+    pc.addTrack(video_track)
+
+    await pc.setRemoteDescription(offer)
+    answer = await pc.createAnswer()
+    await pc.setLocalDescription(answer)
+
+    return {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
+
 
 if __name__ == "__main__":
     import uvicorn
