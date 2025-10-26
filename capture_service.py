@@ -11,7 +11,7 @@ from fastapi.responses import Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 # New imports for WebRTC
-from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
 from aiortc.contrib.media import MediaStreamTrack
 
 # Configure logging
@@ -217,6 +217,14 @@ async def get_frame(camera_name: str):
 
 
 # --- New WebRTC Signaling Endpoint ---
+
+# Define STUN servers for NAT traversal. This helps the server discover its public IP.
+ice_servers = [
+    RTCIceServer(urls="stun:stun.l.google.com:19302"),
+    RTCIceServer(urls="stun:stun1.l.google.com:19302"),
+]
+config = RTCConfiguration(iceServers=ice_servers)
+
 @app.post("/offer")
 async def offer(params: dict = Body(...)):
     """
@@ -229,7 +237,8 @@ async def offer(params: dict = Body(...)):
     if not camera_name or camera_name not in RTSP_STREAMS:
         raise HTTPException(status_code=400, detail="Invalid camera name provided")
 
-    pc = RTCPeerConnection()
+    # Create PeerConnection with the STUN server configuration
+    pc = RTCPeerConnection(config)
     pc_id = f"PeerConnection({uuid.uuid4()})"
     pcs.add(pc)
 
