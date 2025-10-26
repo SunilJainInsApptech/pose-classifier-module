@@ -108,8 +108,8 @@ app.add_middleware(
 
 @app.get("/cameras")
 async def get_cameras():
-    """Returns a JSON array of available camera names."""
-    return list(RTSP_STREAMS.keys())
+    """Returns a JSON object of available camera names and their RTSP URLs."""
+    return RTSP_STREAMS
 
 async def stream_generator(camera_name: str) -> AsyncGenerator[bytes, None]:
     """
