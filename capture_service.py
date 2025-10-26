@@ -218,10 +218,22 @@ async def get_frame(camera_name: str):
 
 # --- New WebRTC Signaling Endpoint ---
 
-# Define STUN servers for NAT traversal. This helps the server discover its public IP.
+# Define STUN and TURN servers for NAT traversal.
 ice_servers = [
     RTCIceServer(urls="stun:stun.l.google.com:19302"),
     RTCIceServer(urls="stun:stun1.l.google.com:19302"),
+    # Adding a free, public TURN server for testing as a fallback.
+    # In a production environment, you should use your own or a paid TURN service.
+    RTCIceServer(
+        urls="turn:openrelay.metered.ca:80",
+        username="openrelayproject",
+        credential="openrelayproject",
+    ),
+    RTCIceServer(
+        urls="turn:openrelay.metered.ca:443",
+        username="openrelayproject",
+        credential="openrelayproject",
+    ),
 ]
 config = RTCConfiguration(iceServers=ice_servers)
 
