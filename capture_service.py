@@ -40,19 +40,21 @@ def capture_rtsp_frame_sync(stream_name: str) -> Optional[np.ndarray]:
     Synchronously captures a frame from an RTSP stream using a persistent
     cv2.VideoCapture object.
     """
+    # --- MORE LOGGING ---
+    LOGGER.info(f"[Capture] Attempting to get frame for {stream_name}")
     if stream_name not in RTSP_STREAMS:
-        LOGGER.error(f"Unknown stream name: {stream_name}")
+        LOGGER.error(f"[Capture] Unknown stream name: {stream_name}")
         return None
 
     stream_url = RTSP_STREAMS[stream_name]
     cap = _caps.get(stream_name)
 
     if cap is None or not cap.isOpened():
-        LOGGER.info(f"Opening new stream for {stream_name}...")
+        LOGGER.warning(f"[Capture] No existing capture for {stream_name} or it's closed. Opening new one.")
         pipeline = GSTREAMER_PIPELINE.format(rtsp_url=stream_url)
         cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
         if not cap.isOpened():
-            LOGGER.error(f"Failed to open stream: {stream_name}")
+            LOGGER.error(f"[Capture] FATAL: GStreamer pipeline failed to open for {stream_name}.")
             if stream_name in _caps:
                 del _caps[stream_name]
             return None
@@ -60,12 +62,14 @@ def capture_rtsp_frame_sync(stream_name: str) -> Optional[np.ndarray]:
 
     ret, frame = cap.read()
     if not ret:
-        LOGGER.warning(f"Failed to read frame from {stream_name}. Releasing capture object.")
+        LOGGER.warning(f"[Capture] cap.read() failed for {stream_name}. Releasing capture object.")
         cap.release()
         if stream_name in _caps:
             del _caps[stream_name]
         return None
     
+    # --- MORE LOGGING ---
+    LOGGER.info(f"[Capture] Successfully read frame for {stream_name} with shape {frame.shape}")
     return frame
 
 # --- WebRTC Implementation ---
@@ -83,11 +87,15 @@ class CameraVideoStreamTrack(MediaStreamTrack):
 
     async def recv(self):
         # This is called by aiortc to get the next frame
+        # --- MORE LOGGING ---
+        LOGGER.info(f"[WebRTC Track] recv() called for {self.camera_name}")
         frame = await asyncio.to_thread(capture_rtsp_frame_sync, self.camera_name)
         
         if frame is None:
             # If frame capture fails, we must still provide a frame.
             # A black frame is a good fallback.
+            # --- MORE LOGGING ---
+            LOGGER.warning(f"[WebRTC Track] Frame capture failed for {self.camera_name}. Sending black frame.")
             frame = np.zeros((480, 640, 3), np.uint8)
 
         # Convert the frame to a WebRTC VideoFrame
@@ -222,15 +230,9 @@ async def get_frame(camera_name: str):
 ice_servers = [
     RTCIceServer(urls="stun:stun.l.google.com:19302"),
     RTCIceServer(urls="stun:stun1.l.google.com:19302"),
-    # Adding a free, public TURN server for testing as a fallback.
-    # In a production environment, you should use your own or a paid TURN service.
+    # Forcing TURN over TCP on port 443 to bypass restrictive firewalls.
     RTCIceServer(
-        urls="turn:openrelay.metered.ca:80",
-        username="openrelayproject",
-        credential="openrelayproject",
-    ),
-    RTCIceServer(
-        urls="turn:openrelay.metered.ca:443",
+        urls="turn:openrelay.metered.ca:443?transport=tcp",
         username="openrelayproject",
         credential="openrelayproject",
     ),
@@ -256,9 +258,18 @@ async def offer(params: dict = Body(...)):
 
     LOGGER.info(f"[{pc_id}] Creating peer connection for camera: {camera_name}")
 
+    # --- MORE LOGGING ---
+    @pc.on("icegatheringstatechange")
+    async def on_icegatheringstatechange():
+        LOGGER.info(f"[{pc_id}] ICE Gathering State: {pc.iceGatheringState}")
+
+    @pc.on("iceconnectionstatechange")
+    async def on_iceconnectionstatechange():
+        LOGGER.info(f"[{pc_id}] ICE Connection State: {pc.iceConnectionState}")
+
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
-        LOGGER.info(f"[{pc_id}] Connection state is {pc.connectionState}")
+        LOGGER.info(f"[{pc_id}] Connection State is {pc.connectionState}")
         if pc.connectionState == "failed" or pc.connectionState == "closed":
             await pc.close()
             pcs.discard(pc)
@@ -268,10 +279,17 @@ async def offer(params: dict = Body(...)):
     video_track = CameraVideoStreamTrack(camera_name)
     pc.addTrack(video_track)
 
+    # --- MORE LOGGING ---
+    LOGGER.info(f"[{pc_id}] Setting remote description (offer)...")
     await pc.setRemoteDescription(offer)
+
+    LOGGER.info(f"[{pc_id}] Creating answer...")
     answer = await pc.createAnswer()
+
+    LOGGER.info(f"[{pc_id}] Setting local description (answer)...")
     await pc.setLocalDescription(answer)
 
+    LOGGER.info(f"[{pc_id}] Handshake complete. Returning answer to client.")
     return {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
 
 
