@@ -230,9 +230,21 @@ async def get_frame(camera_name: str):
 # This configuration MUST match the client-side configuration.
 ice_servers = [
     RTCIceServer(urls="stun:global.stun.twilio.com:3478"),
-    RTCIceServer(urls="turn:global.turn.twilio.com:3478?transport=udp"),
-    RTCIceServer(urls="turn:global.turn.twilio.com:3478?transport=tcp"),
-    RTCIceServer(urls="turn:global.turn.twilio.com:443?transport=tcp"),
+    RTCIceServer(
+        urls="turn:global.turn.twilio.com:3478?transport=udp",
+        username="user",
+        credential="rigguardian"
+    ),
+    RTCIceServer(
+        urls="turn:global.turn.twilio.com:3478?transport=tcp",
+        username="user",
+        credential="rigguardian"
+    ),
+    RTCIceServer(
+        urls="turn:global.turn.twilio.com:443?transport=tcp",
+        username="user",
+        credential="rigguardian"
+    ),
 ]
 config = RTCConfiguration(iceServers=ice_servers)
 
