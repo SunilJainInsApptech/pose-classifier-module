@@ -29,6 +29,7 @@ RTSP_STREAMS = {
 GSTREAMER_PIPELINE = (
     "rtspsrc location={rtsp_url} latency=0 ! "
     "rtph265depay ! h265parse ! "
+    "identity sync=true ! "  # Add identity element for synchronization
     "nvv4l2decoder ! "      # Use the NVIDIA hardware decoder
     "nvvidconv ! "          # Use NVIDIA converter to change format and move to system memory
     "video/x-raw, format=BGR ! " # Directly request BGR format for OpenCV
