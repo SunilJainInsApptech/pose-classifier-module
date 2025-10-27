@@ -25,10 +25,15 @@ RTSP_STREAMS = {
     # Add other stream names and URLs here
 }
 
+# OPTIMIZED GStreamer pipeline using Jetson's hardware decoder
 GSTREAMER_PIPELINE = (
     "rtspsrc location={rtsp_url} latency=0 ! "
-    "rtph265depay ! h265parse ! avdec_h265 ! "
-    "videoconvert ! video/x-raw, format=BGR ! "
+    "rtph265depay ! h265parse ! "
+    "nvv4l2decoder ! "  # Use the NVIDIA hardware decoder
+    "nvvidconv ! "      # Use NVIDIA hardware converter
+    "video/x-raw, format=BGRx ! "
+    "videoconvert ! "   # Convert to BGR for OpenCV
+    "video/x-raw, format=BGR ! "
     "appsink drop=1"
 )
 
