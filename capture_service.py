@@ -227,15 +227,12 @@ async def get_frame(camera_name: str):
 # --- New WebRTC Signaling Endpoint ---
 
 # Define STUN and TURN servers for NAT traversal.
+# This configuration MUST match the client-side configuration.
 ice_servers = [
-    RTCIceServer(urls="stun:stun.l.google.com:19302"),
-    RTCIceServer(urls="stun:stun1.l.google.com:19302"),
-    # Forcing TURN over TCP on port 443 to bypass restrictive firewalls.
-    RTCIceServer(
-        urls="turn:openrelay.metered.ca:443?transport=tcp",
-        username="openrelayproject",
-        credential="openrelayproject",
-    ),
+    RTCIceServer(urls="stun:global.stun.twilio.com:3478"),
+    RTCIceServer(urls="turn:global.turn.twilio.com:3478?transport=udp"),
+    RTCIceServer(urls="turn:global.turn.twilio.com:3478?transport=tcp"),
+    RTCIceServer(urls="turn:global.turn.twilio.com:443?transport=tcp"),
 ]
 config = RTCConfiguration(iceServers=ice_servers)
 
