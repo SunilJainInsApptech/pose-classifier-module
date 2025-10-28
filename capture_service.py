@@ -21,9 +21,9 @@ RTSP_STREAMS = {
 }
 
 GSTREAMER_PIPELINE = (
-    # Add protocols=tcp to rtspsrc to force a more reliable connection
-    "rtspsrc location={rtsp_url} latency=0 protocols=tcp ! "
-    "rtph265depay ! h265parse ! nvv4l2decoder ! "
+    # Use uridecodebin and name it 'demux'
+    "uridecodebin uri={rtsp_url} name=demux ! "
+    "demux. ! queue ! "  
     "nvvidconv ! video/x-raw, format=BGRx ! "
     "videoconvert ! video/x-raw, format=BGR ! "
     "appsink drop=1"
