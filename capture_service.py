@@ -21,10 +21,10 @@ RTSP_STREAMS = {
 }
 
 GSTREAMER_PIPELINE = (
-    # 1. Use rtspsrc with protocols=tcp to force a reliable connection.
-    # 2. Pipe to decodebin to automatically handle video/audio tracks and use hardware decoders.
-    "rtspsrc location={rtsp_url} latency=0 protocols=tcp ! "
-    "decodebin ! "
+    # Use uridecodebin and name it 'demux'
+    "uridecodebin uri={rtsp_url} name=demux ! "
+    # Link the video output of the demuxer (demux.) to the rest of the pipeline
+    "demux. ! queue ! "  
     "nvvidconv ! video/x-raw, format=BGRx ! "
     "videoconvert ! video/x-raw, format=BGR ! "
     "appsink drop=1"
