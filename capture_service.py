@@ -21,13 +21,19 @@ RTSP_STREAMS = {
 }
 
 GSTREAMER_PIPELINE = (
-    # 1. Use rtspsrc with protocols=tcp to force a reliable connection.
-    # 2. Pipe to decodebin to automatically handle video/audio tracks and use hardware decoders.
+    # 1. Use rtspsrc with protocols=tcp
     "rtspsrc location={rtsp_url} latency=0 protocols=tcp ! "
-    "decodebin ! "
-    "nvvidconv ! video/x-raw, format=BGRx ! "
-    "videoconvert ! video/x-raw, format=BGR ! "
-    "appsink drop=1"
+    
+    # 2. Use decodebin with a name ('demux') to create separate video and audio output pads
+    "decodebin name=demux "
+    
+    # 3. Configure the video branch: demux.video_ ! is the video output pad
+    "demux. ! queue ! nvvidconv ! video/x-raw, format=BGRx ! "
+    "videoconvert ! video/x-raw, format=BGR ! appsink drop=1 "
+    
+    # 4. Configure the audio branch: demux.audio_ ! is the audio output pad
+    #    We pipe it to fakesink to simply discard the data.
+    "demux. ! queue ! fakesink "
 )
 
 # --- OpenCV Capture Logic ---
