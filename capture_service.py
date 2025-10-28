@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from typing import Dict, Optional, AsyncGenerator
+import atexit
 from contextlib import asynccontextmanager
 
 import cv2
@@ -21,23 +22,32 @@ RTSP_STREAMS = {
 }
 
 GSTREAMER_PIPELINE = (
-    # 1. Use rtspsrc with protocols=tcp
+    # Add protocols=tcp to rtspsrc to force a more reliable connection
     "rtspsrc location={rtsp_url} latency=0 protocols=tcp ! "
-    
-    # 2. Use decodebin with a name ('demux') to create separate video and audio output pads
-    "decodebin name=demux "
-    
-    # 3. Configure the video branch: demux.video_ ! is the video output pad
-    "demux. ! queue ! nvvidconv ! video/x-raw, format=BGRx ! "
-    "videoconvert ! video/x-raw, format=BGR ! appsink drop=1 "
-    
-    # 4. Configure the audio branch: demux.audio_ ! is the audio output pad
-    #    We pipe it to fakesink to simply discard the data.
-    "demux. ! queue ! fakesink "
+    "rtph265depay ! h265parse ! nvv4l2decoder ! "
+    "nvvidconv ! video/x-raw, format=BGRx ! "
+    "videoconvert ! video/x-raw, format=BGR ! "
+    "appsink drop=1"
 )
 
 # --- OpenCV Capture Logic ---
 _caps: Dict[str, cv2.VideoCapture] = {}
+
+# --- Add this shutdown function ---
+def _shutdown_captures():
+    """
+    This function is registered to run at script exit.
+    It ensures all OpenCV VideoCapture objects are properly released.
+    """
+    LOGGER.info("Shutdown signal received. Releasing all video captures...")
+    for cam_name, cap_obj in _caps.items():
+        if cap_obj and cap_obj.isOpened():
+            LOGGER.info(f"Releasing capture for {cam_name}")
+            cap_obj.release()
+    LOGGER.info("All captures released.")
+
+# Register the shutdown function to be called on exit
+atexit.register(_shutdown_captures)
 
 def capture_rtsp_frame_sync(stream_name: str) -> Optional[np.ndarray]:
     """
