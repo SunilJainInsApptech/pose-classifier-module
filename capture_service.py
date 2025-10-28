@@ -23,7 +23,7 @@ RTSP_STREAMS = {
 
 GSTREAMER_PIPELINE = (
     # Add protocols=tcp to rtspsrc to force a more reliable connection
-    "rtspsrc location={rtsp_url} latency=0 protocols=tcp ! "
+    "rtspsrc location={rtsp_url} latency=0 ! "
     "rtph265depay ! h265parse ! nvv4l2decoder ! "
     "nvvidconv ! video/x-raw, format=BGRx ! "
     "videoconvert ! video/x-raw, format=BGR ! "
