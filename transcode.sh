@@ -37,7 +37,8 @@ gst-launch-1.0 -v \
   rtspsrc location="${INPUT_URL}" latency=0 protocols=tcp ! \
   rtph265depay ! h265parse ! nvv4l2decoder ! \
   nvvidconv ! \
-  "video/x-raw(memory:NVMM),width=640,height=480,framerate=15/1" ! \
-  nvv4l2h264enc tune=zerolatency speed-preset=ultrafast bitrate=3000 ! \
-  h264parse ! rtph264pay pt=96 ! \
+  videorate ! \
+  'video/x-raw, format=I420, width=640, height=480, framerate=15/1' ! \
+  x264enc tune=zerolatency speed-preset=ultrafast bitrate=3000 ! h264parse ! \
+  rtph264pay pt=96 ! \
   rtspsink location="${OUTPUT_URL}"
