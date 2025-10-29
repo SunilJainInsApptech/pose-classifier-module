@@ -25,6 +25,11 @@ OUTPUT_URL="${RTSP_BASE_URL}/${CAMERA_PATH}_h264"
 echo "Activating virtual environment: ${VENV_ACTIVATE}"
 source "${VENV_ACTIVATE}"
 
+# Unset GST_PLUGIN_PATH to force GStreamer to find system-wide plugins
+# like rtspsink, which are not in the virtual environment.
+echo "Unsetting GST_PLUGIN_PATH to find system plugins..."
+unset GST_PLUGIN_PATH
+
 echo "Starting GStreamer transcoder for ${CAMERA_PATH}"
 echo "  Input: ${INPUT_URL}"
 echo "  Output: ${OUTPUT_URL}"
@@ -41,4 +46,4 @@ gst-launch-1.0 -v \
   'video/x-raw, format=I420, width=640, height=480, framerate=15/1' ! \
   x264enc tune=zerolatency speed-preset=ultrafast bitrate=3000 ! h264parse ! \
   rtph264pay pt=96 ! \
-  rtspsink location="${OUTPUT_URL}"
+  udpsink location="${OUTPUT_URL}"
