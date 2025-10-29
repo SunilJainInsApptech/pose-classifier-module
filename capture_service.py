@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 import cv2
 import numpy as np
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 
 # Configure logging
@@ -126,52 +126,10 @@ app.add_middleware(
     allow_headers=["*"], # Allows all headers
 )
 
-
 @app.get("/cameras")
 async def get_cameras():
     """Returns a JSON object of available camera names and their RTSP URLs."""
     return RTSP_STREAMS
-
-async def stream_generator(camera_name: str) -> AsyncGenerator[bytes, None]:
-    """
-    A generator function that captures frames from the RTSP stream,
-    encodes them as JPEG, and yields them for streaming.
-    """
-    while True:
-        # Run the synchronous capture function in a thread to avoid blocking
-        frame = await asyncio.to_thread(capture_rtsp_frame_sync, camera_name)
-        
-        if frame is None:
-            LOGGER.warning(f"Skipping frame for {camera_name} due to capture error.")
-            # Wait a moment before retrying to avoid a tight loop on failure
-            await asyncio.sleep(0.5)
-            continue
-
-        is_success, buffer = cv2.imencode(".jpg", frame)
-        if not is_success:
-            LOGGER.warning(f"Skipping frame for {camera_name} due to encoding error.")
-            continue
-
-        # Yield the frame in the multipart format
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-        
-        # Control the frame rate (e.g., ~30fps). Adjust as needed.
-        await asyncio.sleep(0.03)
-
-
-@app.get("/stream/{camera_name}")
-async def stream_video(camera_name: str):
-    """
-    Endpoint to stream video from a specific camera as an MJPEG stream.
-    View this in a browser via an <img> tag.
-    """
-    if camera_name not in RTSP_STREAMS:
-        raise HTTPException(status_code=404, detail="Camera not found")
-    
-    return StreamingResponse(stream_generator(camera_name),
-                             media_type="multipart/x-mixed-replace; boundary=frame")
-
 
 @app.get("/frame/{camera_name}",
          responses={
