@@ -1,41 +1,28 @@
 #!/bin/bash
 
-# This script transcodes an H.265 RTSP stream to H.264 using GStreamer
-# with hardware acceleration from a specific Python virtual environment.
-
 # --- Configuration ---
-# IMPORTANT: Set this to the correct path of your virtual environment's activate script
-VENV_ACTIVATE="/home/sunil/opencv/build/opencv_env/bin/activate" 
-
-# The base URL of the MediaMTX RTSP server
 RTSP_BASE_URL="rtsp://localhost:8554"
+SYSTEM_GST_PLUGINS="/usr/lib/aarch64-linux-gnu/gstreamer-1.0"
 
 # --- Script Logic ---
-
-# Check if a camera path was provided as an argument
 if [ -z "$1" ]; then
-  echo "Error: No camera path provided. Usage: $0 <camera_path>"
+  echo "Error: No camera path provided."
   exit 1
 fi
 
 CAMERA_PATH="$1"
 INPUT_URL="${RTSP_BASE_URL}/${CAMERA_PATH}"
-OUTPUT_URL="${RTSP_BASE_URL}/${CAMERA_PATH}_h264"
+OUTPUT_URL="${RTSP_BASE_URL}/${CAMERA_PATH}_h24" # Note: Changed to _h24 to avoid path conflict
 
-echo "Activating virtual environment: ${VENV_ACTIVATE}"
-source "${VENV_ACTIVATE}"
-
-# Unset GST_PLUGIN_PATH to force GStreamer to find system-wide plugins
-# like rtspsink, which are not in the virtual environment.
-echo "Unsetting GST_PLUGIN_PATH to find system plugins..."
-unset GST_PLUGIN_PATH
+# This bypasses any environment conflicts from the virtualenv.
+echo "Forcing GStreamer plugin path to: ${SYSTEM_GST_PLUGINS}"
+export GST_PLUGIN_PATH="${SYSTEM_GST_PLUGINS}"
 
 echo "Starting GStreamer transcoder for ${CAMERA_PATH}"
 echo "  Input: ${INPUT_URL}"
 echo "  Output: ${OUTPUT_URL}"
 
-# Add a 2-second delay to wait for the MediaMTX RTSP server to be ready
-sleep 1
+sleep 2
 
 # Adapted GStreamer pipeline for hardware-accelerated transcoding with scaling
 gst-launch-1.0 -v \
