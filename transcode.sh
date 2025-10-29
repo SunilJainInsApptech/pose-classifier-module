@@ -30,12 +30,14 @@ echo "  Input: ${INPUT_URL}"
 echo "  Output: ${OUTPUT_URL}"
 
 # Add a 2-second delay to wait for the MediaMTX RTSP server to be ready
-sleep 2
+sleep 1
 
-# The GStreamer pipeline for hardware-accelerated transcoding
+# Adapted GStreamer pipeline for hardware-accelerated transcoding with scaling
 gst-launch-1.0 -v \
-  rtspsrc location="${INPUT_URL}" latency=0 ! \
+  rtspsrc location="${INPUT_URL}" latency=0 protocols=tcp ! \
   rtph265depay ! h265parse ! nvv4l2decoder ! \
-  nvvidconv ! "video/x-raw(memory:NVMM),format=NV12" ! \
-  nvv4l2h264enc bitrate=2000000 ! h264parse ! \
-  rtph264pay ! rtspsink location="${OUTPUT_URL}"
+  nvvidconv ! \
+  "video/x-raw(memory:NVMM),width=640,height=480,framerate=15/1" ! \
+  nvv4l2h264enc tune=zerolatency speed-preset=ultrafast bitrate=3000 ! \
+  h264parse ! rtph264pay pt=96 ! \
+  rtspsink location="${OUTPUT_URL}"
