@@ -29,9 +29,12 @@ echo "Starting GStreamer transcoder for ${CAMERA_PATH}"
 echo "  Input: ${INPUT_URL}"
 echo "  Output: ${OUTPUT_URL}"
 
+# Add a 2-second delay to wait for the MediaMTX RTSP server to be ready
+sleep 2
+
 # The GStreamer pipeline for hardware-accelerated transcoding
 gst-launch-1.0 -v \
-  rtspsrc location="${INPUT_URL}" latency=0 protocols=tcp ! \
+  rtspsrc location="${INPUT_URL}" latency=0 ! \
   rtph265depay ! h265parse ! nvv4l2decoder ! \
   nvvidconv ! "video/x-raw(memory:NVMM),format=NV12" ! \
   nvv4l2h264enc bitrate=2000000 ! h264parse ! \
