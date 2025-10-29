@@ -46,4 +46,4 @@ gst-launch-1.0 -v \
   'video/x-raw, format=I420, width=640, height=480, framerate=15/1' ! \
   x264enc tune=zerolatency speed-preset=ultrafast bitrate=3000 ! h264parse ! \
   rtph264pay pt=96 ! \
-  udpsink location="${OUTPUT_URL}"
+  rtspsink location="${OUTPUT_URL}"
