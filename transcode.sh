@@ -5,14 +5,20 @@ RTSP_BASE_URL="rtsp://localhost:8554"
 # MediaMTX listens for RTMP on port 1935 by default
 RTMP_OUTPUT_URL="rtmp://localhost:1935"
 
+# Optional: Set GStreamer path for stability when run from a virtual environment
+SYSTEM_GST_PLUGINS="/usr/lib/aarch64-linux-gnu/gstreamer-1.0"
+export GST_PLUGIN_PATH="${SYSTEM_GST_PLUGINS}"
+
 # --- Script Logic ---
 if [ -z "$1" ]; then
-  echo "Error: No camera path provided."
-  exit 1
+    echo "Error: No camera path provided."
+    echo "Usage: $0 <camera_path_name>"
+    exit 1
 fi
 
 CAMERA_PATH="$1"
-INPUT_URL="${RTSP_INPUT_URL}/${CAMERA_PATH}"
+# FIX: Changed RTSP_INPUT_URL to the defined variable: RTSP_BASE_URL
+INPUT_URL="${RTSP_BASE_URL}/${CAMERA_PATH}" 
 # The output path will be the stream name for RTMP
 OUTPUT_PATH="${CAMERA_PATH}_h264"
 OUTPUT_URL="${RTMP_OUTPUT_URL}/${OUTPUT_PATH}"
