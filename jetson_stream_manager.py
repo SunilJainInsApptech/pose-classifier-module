@@ -11,7 +11,8 @@ import threading
 # --- Configuration ---
 
 # Directory where HLS segments for all cameras will be stored temporarily
-HLS_OUTPUT_BASE_DIR = '/home/jetson/streams/hls_output'
+sudo mkdir -p /home/sunil/streams/hls_output
+sudo chown sunil: /home/sunil/streams/hls_output
 
 # Placeholder map of Camera ID (used by web app) to its RTSP URL
 # You MUST replace these with your actual RTSP URLs
