@@ -20,29 +20,25 @@ CAMERA_URLS = {
 }
 
 # --- Droplet Configuration (REQUIRED FOR RSYNC) ---
-# NOTE: This user MUST have passwordless SSH access set up (Step 2)
-DROPLET_USER = 'root'  # CHANGED TO 'root'
+DROPLET_USER = 'root'  
 DROPLET_IP = '104.236.30.246'
-DROPLET_HLS_SERVE_DIR = '/var/www/hls' # Matches directory in droplet_hls_server.py
+DROPLET_HLS_SERVE_DIR = '/var/www/hls' 
 
 # RSYNC SSH Key Path - Use ABSOLUTE path for reliability in subprocesses
 RSYNC_SSH_KEY_PATH = os.path.expanduser('~/.ssh/id_ed25519_hls')
 
-# FFmpeg HLS Parameters (using stream copy for efficiency)
-# -hls_time 2: segment duration of 2 seconds
-# -hls_list_size 5: keep 5 segments in the playlist (10 seconds of video total)
-# -hls_delete_threshold 1: delete old segments as new ones are created
+# FFmpeg HLS Parameters 
 FFMPEG_PARAMS = [
-    '-loglevel', 'error',       # Only show errors
-    '-c:v', 'copy',             # Stream copy (highly efficient)
-    '-an',                      # No audio
-    '-f', 'hls',                # HLS format
+    '-loglevel', 'error',       
+    '-c:v', 'copy',             
+    '-an',                      
+    '-f', 'hls',                
     '-hls_time', '2',
     '-hls_list_size', '5',
     '-hls_flags', 'delete_segments+split_by_time',
     '-hls_delete_threshold', '1',
-    '-hls_base_url', '',        # Relative URL for segments
-    '-map', '0:v:0'             # Map only the first video stream
+    '-hls_base_url', '',        
+    '-map', '0:v:0'             
 ]
 
 # Global variables to hold the running processes
@@ -78,12 +74,6 @@ def start_sync_job(camera_id, source_dir):
     # Destination directory on the Droplet
     dest_path = f"{DROPLET_USER}@{DROPLET_IP}:{DROPLET_HLS_SERVE_DIR}/{camera_id}"
     
-    # rsync command details:
-    # -a: archive mode (preserves attributes)
-    # -z: compression
-    # --delete: CRUCIAL for HLS - removes old .ts files on the destination
-    # -W: copy files block-by-block (faster for smaller segment files)
-    # --delay-updates: writes files to a temp dir first, useful for HLS playback reliability
     rsync_command = [
         'rsync',
         '-azW',
@@ -94,49 +84,54 @@ def start_sync_job(camera_id, source_dir):
         dest_path
     ]
     
-    # We will run this command repeatedly in a thread, sleeping between pushes
-    
     def run_rsync_loop(cmd):
         print(f"Starting continuous rsync job for {camera_id} to {DROPLET_IP}")
         
-        # Use the explicitly defined ABSOLUTE key path
-        # This is essential when running inside Python/a service, 
-        # as it doesn't automatically load the default keys.
-        cmd_with_key = cmd + ['-e', f'ssh -i {RSYNC_SSH_KEY_PATH}']
+        # Add the SSH key argument
+        # NOTE: We use '-o StrictHostKeyChecking=no' temporarily to rule out Host Key Verification errors
+        cmd_with_key = cmd + ['-e', f'ssh -o StrictHostKeyChecking=no -i {RSYNC_SSH_KEY_PATH}']
+        
+        # --- DEBUGGING PRINT 1: Print the full command ---
+        print(f"DEBUG: Rsync command: {' '.join(cmd_with_key)}")
+        # --------------------------------------------------
 
         while True:
-            # Check if we've been signaled to stop (handled by stop_sync_job)
+            # Check if we've been signaled to stop
             if threading.current_thread().stop_event.is_set():
                 print(f"Rsync loop for {camera_id} received stop signal. Exiting.")
                 break
                 
             try:
                 # Use subprocess.run for a single execution, wait for completion
-                subprocess.run(
+                result = subprocess.run(
                     cmd_with_key, 
                     check=True, 
                     stdout=subprocess.DEVNULL, 
-                    # Capture stderr for debugging, but we rely on check=True for the error message
-                    stderr=subprocess.PIPE,
-                    timeout=5 # Add a timeout to prevent rsync from hanging indefinitely
+                    stderr=subprocess.PIPE, # Capture stderr for debugging
+                    timeout=5 
                 )
+                # print(f"DEBUG: Rsync successful.") 
             except subprocess.CalledProcessError as e:
-                # If rsync fails (e.g., connection drop, bad key), it will be caught here and retried
-                # We print the return code to help debug the specific failure
+                # If rsync fails, print the error code
+                stderr_output = e.stderr.decode(errors='ignore').strip()
                 print(f"Rsync Error (retry in 1s): Command failed: return code {e.returncode}")
-                # Optional: If you want to see the error output from rsync/ssh:
-                # print(f"Rsync Stderr: {e.stderr.decode()}")
+                
+                # --- DEBUGGING PRINT 2: Print the SSH/rsync error output ---
+                if stderr_output:
+                    print(f"--- RSYNC STDERR BEGIN (Return Code {e.returncode}) ---")
+                    print(stderr_output)
+                    print(f"--- RSYNC STDERR END ---")
+                # ------------------------------------------------------------
+
             except FileNotFoundError:
                 print("Rsync Error: rsync command not found. Is it installed?")
             except Exception as e:
                 print(f"Rsync Error: Unexpected exception: {e}")
             
-            # The heart of the low-latency sync: rsync every 1 second
             time.sleep(1) 
 
     # Create and start the thread
     rsync_thread = threading.Thread(target=run_rsync_loop, args=(rsync_command,))
-    # Use a custom event to signal the thread to stop
     rsync_thread.stop_event = threading.Event()
     rsync_thread.daemon = True
     rsync_process = rsync_thread
@@ -148,7 +143,6 @@ def stop_sync_job():
     global rsync_process
     if rsync_process and rsync_process.is_alive():
         print("Attempting to stop rsync synchronization job...")
-        # Signal the thread loop to exit gracefully
         rsync_process.stop_event.set()
         rsync_process.join(timeout=5)
         
@@ -167,14 +161,13 @@ def start_stream(camera_id):
     if ffmpeg_process and ffmpeg_process.poll() is None:
         if active_camera_id == camera_id:
             print(f"Stream for {camera_id} is already running.")
-            return
+            return 'skip'
 
         print(f"Stopping active stream for {active_camera_id} before starting {camera_id}.")
         stop_stream()
 
     # Create output directory for the specific camera
     output_dir = os.path.join(HLS_OUTPUT_BASE_DIR, camera_id)
-    # This now uses the current user's home directory, resolving the PermissionError
     os.makedirs(output_dir, exist_ok=True)
     
     # The output playlist file name
@@ -182,7 +175,7 @@ def start_stream(camera_id):
     
     ffmpeg_command = get_ffmpeg_command(camera_id, playlist_path)
     if not ffmpeg_command:
-        return
+        return 'error'
 
     print(f"Starting stream for {camera_id}...")
     try:
@@ -192,7 +185,6 @@ def start_stream(camera_id):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             stdin=subprocess.PIPE,
-            # Use 'detached' mode for long-running background process management
             preexec_fn=os.setsid 
         )
         active_camera_id = camera_id
@@ -208,7 +200,8 @@ def start_stream(camera_id):
         print("Error: FFmpeg command not found. Ensure FFmpeg is installed and in your PATH.")
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
-        stop_sync_job() # Clean up rsync if FFmpeg fails to start
+        stop_sync_job() 
+        return 'error'
 
 def stop_stream():
     """Stops the currently running FFmpeg subprocess and the rsync job gracefully."""
@@ -221,7 +214,6 @@ def stop_stream():
     if ffmpeg_process and ffmpeg_process.poll() is None:
         print(f"Attempting to stop FFmpeg PID {ffmpeg_process.pid} for {active_camera_id}...")
         
-        # Send SIGTERM (graceful kill) to the process group
         try:
             os.killpg(os.getpgid(ffmpeg_process.pid), signal.SIGTERM)
             ffmpeg_process.wait(timeout=5)
