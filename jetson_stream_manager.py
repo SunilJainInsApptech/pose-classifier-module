@@ -16,7 +16,7 @@ HLS_OUTPUT_BASE_DIR = '/home/sunil/streams/hls_output'
 # Placeholder map of Camera ID (used by web app) to its RTSP URL
 # You MUST replace these with your actual RTSP URLs
 CAMERA_URLS = {
-    'ch01': 'rtsp://192.168.1.200:554/chID=01&streamType=sub',
+    'ch01': 'rtsp://70.19.68.121:554/chID=01&streamType=sub',
 }
 
 # --- Droplet Configuration (REQUIRED FOR RSYNC) ---
