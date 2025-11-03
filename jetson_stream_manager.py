@@ -255,7 +255,7 @@ if __name__ == "__main__":
         print("Example: python jetson_stream_manager.py CAM_01")
         sys.exit(1)
         
-    requested_camera = sys.argv[1].upper()
+    requested_camera = sys.argv[1]
     
     # Set up signal handler for Ctrl+C to ensure clean shutdown
     def signal_handler(sig, frame):
