@@ -25,6 +25,9 @@ DROPLET_USER = 'root'  # CHANGED TO 'root'
 DROPLET_IP = '104.236.30.246'
 DROPLET_HLS_SERVE_DIR = '/var/www/hls' # Matches directory in droplet_hls_server.py
 
+# RSYNC SSH Key Path - Use ABSOLUTE path for reliability in subprocesses
+RSYNC_SSH_KEY_PATH = os.path.expanduser('~/.ssh/id_ed25519_hls')
+
 # FFmpeg HLS Parameters (using stream copy for efficiency)
 # -hls_time 2: segment duration of 2 seconds
 # -hls_list_size 5: keep 5 segments in the playlist (10 seconds of video total)
@@ -80,7 +83,6 @@ def start_sync_job(camera_id, source_dir):
     # -z: compression
     # --delete: CRUCIAL for HLS - removes old .ts files on the destination
     # -W: copy files block-by-block (faster for smaller segment files)
-    # --exclude: ignores the log file if we were logging here
     # --delay-updates: writes files to a temp dir first, useful for HLS playback reliability
     rsync_command = [
         'rsync',
@@ -96,10 +98,11 @@ def start_sync_job(camera_id, source_dir):
     
     def run_rsync_loop(cmd):
         print(f"Starting continuous rsync job for {camera_id} to {DROPLET_IP}")
-        # Add the SSH key identity file argument here for the running thread
+        
+        # Use the explicitly defined ABSOLUTE key path
         # This is essential when running inside Python/a service, 
         # as it doesn't automatically load the default keys.
-        cmd_with_key = cmd + ['-e', 'ssh -i ~/.ssh/id_ed25519_hls']
+        cmd_with_key = cmd + ['-e', f'ssh -i {RSYNC_SSH_KEY_PATH}']
 
         while True:
             # Check if we've been signaled to stop (handled by stop_sync_job)
@@ -113,11 +116,16 @@ def start_sync_job(camera_id, source_dir):
                     cmd_with_key, 
                     check=True, 
                     stdout=subprocess.DEVNULL, 
-                    stderr=subprocess.DEVNULL
+                    # Capture stderr for debugging, but we rely on check=True for the error message
+                    stderr=subprocess.PIPE,
+                    timeout=5 # Add a timeout to prevent rsync from hanging indefinitely
                 )
             except subprocess.CalledProcessError as e:
-                # If rsync fails (e.g., connection drop), it will be caught here and retried
-                print(f"Rsync Error (retry in 1s): Command failed: {e}")
+                # If rsync fails (e.g., connection drop, bad key), it will be caught here and retried
+                # We print the return code to help debug the specific failure
+                print(f"Rsync Error (retry in 1s): Command failed: return code {e.returncode}")
+                # Optional: If you want to see the error output from rsync/ssh:
+                # print(f"Rsync Stderr: {e.stderr.decode()}")
             except FileNotFoundError:
                 print("Rsync Error: rsync command not found. Is it installed?")
             except Exception as e:
@@ -166,6 +174,7 @@ def start_stream(camera_id):
 
     # Create output directory for the specific camera
     output_dir = os.path.join(HLS_OUTPUT_BASE_DIR, camera_id)
+    # This now uses the current user's home directory, resolving the PermissionError
     os.makedirs(output_dir, exist_ok=True)
     
     # The output playlist file name
@@ -254,7 +263,7 @@ if __name__ == "__main__":
         print("Example: python jetson_stream_manager.py CAM_01")
         sys.exit(1)
         
-    requested_camera = sys.argv[1]
+    requested_camera = sys.argv[1].upper()
     
     # Set up signal handler for Ctrl+C to ensure clean shutdown
     def signal_handler(sig, frame):
