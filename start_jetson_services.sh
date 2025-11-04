@@ -6,7 +6,7 @@
 
 # --- Configuration ---
 # Set your API Secret using single quotes to protect the '!' from shell history expansion
-export API_SECRET='Rig_Guardian10023!'
+export API_SECRET='your_api_secret_here'
 JETSON_API_SCRIPT="jetson_api_service.py"
 SSH_TUNNEL_COMMAND="ssh -N -R 50000:localhost:5000 root@104.236.30.246 -i ~/.ssh/id_ed25519_hls"
 
