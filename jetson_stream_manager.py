@@ -7,6 +7,10 @@ import os
 import signal
 import sys
 import threading
+import logging 
+
+# Set up logging for better output in supervisor/jetson_api_service.err.log
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 # --- Configuration ---
 
@@ -45,11 +49,90 @@ FFMPEG_PARAMS = [
 ffmpeg_process = None
 rsync_process = None
 active_camera_id = None
+stream_lock = threading.Lock() # Added lock for thread safety
+
+# --- Watchdog Globals ---
+watchdog_thread = None
+keep_running = False
+
+
+# --- WATCHDOG IMPLEMENTATION ---
+
+def _monitor_ffmpeg(camera_id, playlist_path):
+    """
+    Monitors the FFmpeg process status and automatically restarts it if it crashes.
+    Runs as a separate daemon thread.
+    """
+    global ffmpeg_process, stream_lock, keep_running
+    
+    # Check interval (seconds) - check every 5 seconds
+    RESTART_CHECK_INTERVAL = 5 
+    
+    logging.info(f"Watchdog started for camera {camera_id}.")
+
+    while keep_running:
+        time.sleep(RESTART_CHECK_INTERVAL)
+
+        with stream_lock:
+            # Check if FFmpeg process exists and if it has terminated
+            if ffmpeg_process:
+                # poll() returns None if running, or the exit code if terminated
+                exit_code = ffmpeg_process.poll()
+                
+                if exit_code is not None:
+                    # FFmpeg has crashed/terminated (like the defunct process you saw)
+                    logging.warning(f"FFmpeg process detected dead (Exit Code: {exit_code}). Attempting restart for {camera_id}...")
+                    
+                    # 1. Ensure the old dead process is cleaned up
+                    try:
+                        ffmpeg_process.wait() # Clean up the zombie process entry
+                    except Exception:
+                        pass
+                    
+                    # 2. Relaunch FFmpeg using the internal start function
+                    try:
+                        # Before restarting, clear the old reference
+                        ffmpeg_process = None 
+                        _start_ffmpeg(camera_id, playlist_path)
+                        logging.info(f"FFmpeg process successfully restarted.")
+                    except Exception as e:
+                        logging.error(f"Failed to restart FFmpeg: {e}")
+                        # If restart fails, we let the loop continue and try again later
+            
+            # If ffmpeg_process is None, the stream must have been explicitly stopped
+            elif active_camera_id is not None:
+                # This case indicates an error where active_camera_id is set, but the process reference is lost.
+                logging.error("Watchdog found stream active but FFmpeg process handle missing. Exiting watchdog.")
+                break
+
+
+def _start_ffmpeg(camera_id, playlist_path):
+    """Internal function to launch the FFmpeg process."""
+    global ffmpeg_process
+    
+    ffmpeg_command = get_ffmpeg_command(camera_id, playlist_path)
+    if not ffmpeg_command:
+        raise ValueError(f"Could not construct FFmpeg command for {camera_id}")
+
+    # Start the process using start_new_session=True for clean process group termination
+    # This is the portable replacement for preexec_fn=os.setsid
+    ffmpeg_process = subprocess.Popen(
+        ffmpeg_command,
+        stdout=subprocess.DEVNULL, 
+        stderr=subprocess.DEVNULL, 
+        stdin=subprocess.PIPE,
+        start_new_session=True  # Creates a new process group for clean shutdown
+    )
+    logging.info(f"FFmpeg process started for {camera_id} with PID: {ffmpeg_process.pid}")
+
+
+# --- EXISTING FUNCTIONS (Modified/Relocated for Watchdog) ---
+
 
 def get_ffmpeg_command(camera_id, output_path):
     """Constructs the full FFmpeg command."""
     if camera_id not in CAMERA_URLS:
-        print(f"Error: Camera ID '{camera_id}' not found in configuration.")
+        logging.error(f"Error: Camera ID '{camera_id}' not found in configuration.")
         return None
 
     rtsp_url = CAMERA_URLS[camera_id]
@@ -67,7 +150,7 @@ def get_ffmpeg_command(camera_id, output_path):
 def start_sync_job(camera_id, source_dir):
     """
     Starts a continuous rsync job in a subprocess to push files 
-    from the Jetson to the Droplet.
+    from the Jetson to the Droplet. (Retained original logic).
     """
     global rsync_process
     
@@ -85,50 +168,41 @@ def start_sync_job(camera_id, source_dir):
     ]
     
     def run_rsync_loop(cmd):
-        print(f"Starting continuous rsync job for {camera_id} to {DROPLET_IP}")
+        logging.info(f"Starting continuous rsync job for {camera_id} to {DROPLET_IP}")
         
         # Add the SSH key argument
-        # NOTE: We use '-o StrictHostKeyChecking=no' temporarily to rule out Host Key Verification errors
         cmd_with_key = cmd + ['-e', f'ssh -o StrictHostKeyChecking=no -i {RSYNC_SSH_KEY_PATH}']
         
-        # --- DEBUGGING PRINT 1: Print the full command ---
-        print(f"DEBUG: Rsync command: {' '.join(cmd_with_key)}")
-        # --------------------------------------------------
-
+        # Add the check flag for the rsync thread
+        current_thread = threading.current_thread()
+        if not hasattr(current_thread, 'stop_event'):
+            current_thread.stop_event = threading.Event()
+            
         while True:
             # Check if we've been signaled to stop
-            if threading.current_thread().stop_event.is_set():
-                print(f"Rsync loop for {camera_id} received stop signal. Exiting.")
+            if current_thread.stop_event.is_set():
+                logging.info(f"Rsync loop for {camera_id} received stop signal. Exiting.")
                 break
                 
             try:
                 # Use subprocess.run for a single execution, wait for completion
-                result = subprocess.run(
+                subprocess.run(
                     cmd_with_key, 
                     check=True, 
                     stdout=subprocess.DEVNULL, 
-                    stderr=subprocess.PIPE, # Capture stderr for debugging
-                    timeout=5 
+                    stderr=subprocess.DEVNULL, 
+                    timeout=10 # Increased timeout slightly for reliable network operation
                 )
-                # print(f"DEBUG: Rsync successful.") 
+            except subprocess.TimeoutExpired:
+                logging.warning("Rsync Warning: Command timed out. Retrying...")
             except subprocess.CalledProcessError as e:
-                # If rsync fails, print the error code
-                stderr_output = e.stderr.decode(errors='ignore').strip()
-                print(f"Rsync Error (retry in 1s): Command failed: return code {e.returncode}")
-                
-                # --- DEBUGGING PRINT 2: Print the SSH/rsync error output ---
-                if stderr_output:
-                    print(f"--- RSYNC STDERR BEGIN (Return Code {e.returncode}) ---")
-                    print(stderr_output)
-                    print(f"--- RSYNC STDERR END ---")
-                # ------------------------------------------------------------
-
+                logging.error(f"Rsync Error (retry in 1s): Command failed: return code {e.returncode}")
             except FileNotFoundError:
-                print("Rsync Error: rsync command not found. Is it installed?")
+                logging.error("Rsync Error: rsync command not found. Is it installed?")
             except Exception as e:
-                print(f"Rsync Error: Unexpected exception: {e}")
+                logging.error(f"Rsync Error: Unexpected exception: {e}")
             
-            time.sleep(1) 
+            time.sleep(1) # Short delay before the next sync attempt
 
     # Create and start the thread
     rsync_thread = threading.Thread(target=run_rsync_loop, args=(rsync_command,))
@@ -141,92 +215,108 @@ def start_sync_job(camera_id, source_dir):
 def stop_sync_job():
     """Stops the running rsync thread."""
     global rsync_process
+    
     if rsync_process and rsync_process.is_alive():
-        print("Attempting to stop rsync synchronization job...")
+        logging.info("Attempting to stop rsync synchronization job...")
+        # Signal the thread to stop its loop
         rsync_process.stop_event.set()
+        # Wait for the thread to finish
         rsync_process.join(timeout=5)
         
-        if rsync_process.is_alive():
-            print("Rsync thread did not terminate gracefully.")
+        if rsync_process and rsync_process.is_alive():
+            logging.warning("Rsync thread did not terminate gracefully.")
         else:
-            print("Rsync synchronization stopped.")
+            logging.info("Rsync synchronization stopped.")
 
     rsync_process = None
 
 
 def start_stream(camera_id):
-    """Starts the FFmpeg subprocess for the given camera ID."""
-    global ffmpeg_process, active_camera_id
-
-    if ffmpeg_process and ffmpeg_process.poll() is None:
-        if active_camera_id == camera_id:
-            print(f"Stream for {camera_id} is already running.")
-            return 'skip'
-
-        print(f"Stopping active stream for {active_camera_id} before starting {camera_id}.")
-        stop_stream()
-
-    # Create output directory for the specific camera
-    output_dir = os.path.join(HLS_OUTPUT_BASE_DIR, camera_id)
-    os.makedirs(output_dir, exist_ok=True)
+    """Starts the FFmpeg subprocess for the given camera ID and the watchdog."""
+    global ffmpeg_process, active_camera_id, watchdog_thread, keep_running
     
-    # The output playlist file name
-    playlist_path = os.path.join(output_dir, 'playlist.m3u8')
-    
-    ffmpeg_command = get_ffmpeg_command(camera_id, playlist_path)
-    if not ffmpeg_command:
-        return 'error'
-
-    print(f"Starting stream for {camera_id}...")
-    try:
-        # Start the subprocess without waiting
-        ffmpeg_process = subprocess.Popen(
-            ffmpeg_command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            stdin=subprocess.PIPE,
-            preexec_fn=os.setsid 
-        )
-        active_camera_id = camera_id
-        print(f"FFmpeg process started for {camera_id} with PID: {ffmpeg_process.pid}")
-        
-        # *** NEW: Start the rsync sync job right after FFmpeg starts ***
-        start_sync_job(camera_id, output_dir)
-        
-        # Return the expected location of the files for syncing
-        return output_dir
-
-    except FileNotFoundError:
-        print("Error: FFmpeg command not found. Ensure FFmpeg is installed and in your PATH.")
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-        stop_sync_job() 
-        return 'error'
-
-def stop_stream():
-    """Stops the currently running FFmpeg subprocess and the rsync job gracefully."""
-    global ffmpeg_process, active_camera_id
-    
-    # 1. Stop rsync first to prevent syncing stale files
-    stop_sync_job()
-    
-    # 2. Stop FFmpeg
-    if ffmpeg_process and ffmpeg_process.poll() is None:
-        print(f"Attempting to stop FFmpeg PID {ffmpeg_process.pid} for {active_camera_id}...")
+    with stream_lock:
+        if active_camera_id:
+            if active_camera_id == camera_id:
+                logging.info(f"Stream for {camera_id} is already running.")
+                return os.path.join(HLS_OUTPUT_BASE_DIR, camera_id)
+                
+            logging.warning(f"Stopping active stream for {active_camera_id} before starting {camera_id}.")
+            stop_stream()
+            
+        # 1. Setup paths
+        output_dir = os.path.join(HLS_OUTPUT_BASE_DIR, camera_id)
+        os.makedirs(output_dir, exist_ok=True)
+        playlist_path = os.path.join(output_dir, 'playlist.m3u8')
         
         try:
-            os.killpg(os.getpgid(ffmpeg_process.pid), signal.SIGTERM)
-            ffmpeg_process.wait(timeout=5)
-            print("FFmpeg process stopped gracefully.")
+            keep_running = True # Set global flag for watchdog and rsync loops
+            
+            # 2. Start FFmpeg
+            _start_ffmpeg(camera_id, playlist_path)
+            
+            # 3. Start Rsync sync job
+            start_sync_job(camera_id, output_dir)
+            
+            # 4. Start the watchdog monitor thread
+            watchdog_thread = threading.Thread(
+                target=_monitor_ffmpeg, 
+                args=(camera_id, playlist_path,), 
+                daemon=True
+            )
+            watchdog_thread.start()
+            
+            active_camera_id = camera_id
+            return output_dir
+
         except Exception as e:
-            print(f"Could not stop gracefully, forcing kill: {e}")
-            ffmpeg_process.kill()
-            ffmpeg_process.wait()
+            logging.error(f"Failed to start stream components: {e}")
+            # Ensure proper cleanup on failure
+            stop_stream() 
+            return None
+
+
+def stop_stream():
+    """Stops the currently running FFmpeg subprocess, the rsync job, and the watchdog."""
+    global ffmpeg_process, active_camera_id, watchdog_thread, keep_running
+    
+    with stream_lock:
+        # 1. Stop background loops
+        keep_running = False
         
-        ffmpeg_process = None
-        active_camera_id = None
-    else:
-        print("No FFmpeg process is currently running.")
+        # 2. Stop rsync first
+        stop_sync_job()
+        
+        # 3. Stop FFmpeg
+        if ffmpeg_process and ffmpeg_process.poll() is None:
+            pid = ffmpeg_process.pid
+            logging.info(f"Attempting to stop FFmpeg PID {pid} for {active_camera_id}...")
+            
+            try:
+                # Use os.kill on the PID. If start_new_session=True was used, 
+                # this PID is the session leader and kills the whole group.
+                os.kill(pid, signal.SIGTERM) 
+                
+                # Wait for process termination and clean up the process table entry (no zombie)
+                ffmpeg_process.wait(timeout=5)
+                logging.info("FFmpeg process stopped gracefully.")
+            except Exception as e:
+                logging.warning(f"Could not stop gracefully, forcing kill: {e}")
+                try:
+                    ffmpeg_process.kill()
+                    ffmpeg_process.wait()
+                except Exception:
+                    pass
+            
+            ffmpeg_process = None
+            active_camera_id = None
+        else:
+            logging.info("No active FFmpeg process was found to stop.")
+
+        # 4. Clear watchdog thread reference (it will exit due to keep_running=False)
+        watchdog_thread = None
+        logging.info("Stream and associated processes successfully stopped.")
+
 
 def main_loop(camera_id):
     """Simple loop for demonstration, in a real scenario this would be an API listener."""
@@ -252,7 +342,7 @@ def main_loop(camera_id):
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python jetson_stream_manager.py <camera_id>")
-        print("Example: python jetson_stream_manager.py CAM_01")
+        print("Example: python jetson_stream_manager.py ch01")
         sys.exit(1)
         
     requested_camera = sys.argv[1]
