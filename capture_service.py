@@ -15,10 +15,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 LOGGER = logging.getLogger(__name__)
 
 # --- Configuration (Should match your main script) ---
+# --- FIX: Restore the streamType parameter and ESCAPE the '&' character ---
+# The camera needs '&streamType=sub'. The '&' must be escaped with '\\' for GStreamer.
 RTSP_STREAMS = {
-    'Lobby_Center_North': 'rtsp://70.19.68.121:554/chID=25',
-    'CPW_Awning_N_Facing': 'rtsp://70.19.68.121:554/chID=16',
-    'Roof_Front_East_Facing': 'rtsp://70.19.68.121:554/chID=01',
+    'Lobby_Center_North': 'rtsp://70.19.68.121:554/chID=25\\&streamType=sub',
+    'CPW_Awning_N_Facing': 'rtsp://70.19.68.121:554/chID=16\\&streamType=sub',
+    'Roof_Front_East_Facing': 'rtsp://70.19.68.121:554/chID=01\\&streamType=sub',
     # Add other stream names and URLs here
 }
 
