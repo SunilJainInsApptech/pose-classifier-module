@@ -15,12 +15,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 LOGGER = logging.getLogger(__name__)
 
 # --- Configuration (Should match your main script) ---
-# --- FIX: URL-encode the '&' character as '%26' ---
-# GStreamer and RTSP both understand URL encoding, so '&' becomes '%26'
+# Use the literal '&' character - GStreamer/OpenCV handle it correctly when it's in the URL string
 RTSP_STREAMS = {
-    'Lobby_Center_North': 'rtsp://70.19.68.121:554/chID=25%26streamType=sub',
-    'CPW_Awning_N_Facing': 'rtsp://70.19.68.121:554/chID=16%26streamType=sub',
-    'Roof_Front_East_Facing': 'rtsp://70.19.68.121:554/chID=01%26streamType=sub',
+    'Lobby_Center_North': 'rtsp://70.19.68.121:554/chID=25&streamType=sub?tcp',
+    'CPW_Awning_N_Facing': 'rtsp://70.19.68.121:554/chID=16&streamType=sub?tcp',
+    'Roof_Front_East_Facing': 'rtsp://70.19.68.121:554/chID=01&streamType=sub?tcp',
     # Add other stream names and URLs here
 }
 
