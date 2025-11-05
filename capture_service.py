@@ -24,7 +24,7 @@ RTSP_STREAMS = {
 
 GSTREAMER_PIPELINE = (
     "rtspsrc location={rtsp_url} latency=0 ! "
-    "rtph265depay ! h265parse ! nvv4l2decoder ! "
+    "rtph264depay ! h264parse ! nvv4l2decoder ! "
     "nvvidconv ! video/x-raw, format=BGRx ! "
     "videoconvert ! video/x-raw, format=BGR ! "
     "appsink drop=1"
