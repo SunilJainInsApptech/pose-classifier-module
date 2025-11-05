@@ -153,22 +153,11 @@ async def get_frame(camera_name: str):
     if frame is None:
         raise HTTPException(status_code=404, detail=f"Could not capture frame from {camera_name}")
 
-    # --- SAVE DEBUG COPY to Viam-synced folder ---
-    try:
-        outdir = "/home/sunil/Documents/viam_captured_images"
-        os.makedirs(outdir, exist_ok=True)
-        ts = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-        fname = f"{ts}_{camera_name}_capture.jpg"
-        cv2.imwrite(os.path.join(outdir, fname), frame)
-    except Exception:
-        LOGGER.exception("Failed to save debug image")
-
     is_success, buffer = cv2.imencode(".jpg", frame)
     if not is_success:
         raise HTTPException(status_code=500, detail="Failed to encode frame to JPEG")
 
     return Response(content=buffer.tobytes(), media_type="image/jpeg")
-
 
 if __name__ == "__main__":
     import uvicorn
