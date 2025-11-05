@@ -24,13 +24,14 @@ RTSP_STREAMS = {
 }
 
 # --- UPDATED GSTREAMER PIPELINE ---
-# Simplified to use nvvidconv for direct conversion to BGR, which is more robust.
-# This avoids the buffer mismatch errors seen with the BGRx -> BGR conversion chain.
-# ADDED protocols=tcp to rtspsrc to force a reliable TCP connection for the media stream.
+# Simplified pipeline for Jetson:
+# - Use protocols=tcp to avoid UDP packet loss issues
+# - Remove explicit format=BGR caps; let nvvidconv negotiate the format automatically
+# - appsink will receive the data in a format OpenCV can handle
 GSTREAMER_PIPELINE = (
-    "rtspsrc location={rtsp_url} latency=0 ! "
+    "rtspsrc location={rtsp_url} latency=0 protocols=tcp ! "
     "rtph264depay ! h264parse ! nvv4l2decoder ! "
-    "nvvidconv ! video/x-raw, format=BGR ! "
+    "nvvidconv ! "
     "appsink drop=1"
 )
 
