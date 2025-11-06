@@ -184,6 +184,14 @@ def stop_stream_for_camera(camera_id: str):
     jetson_response = send_jetson_command('/stream/stop', {'camera_id': camera_id})
     return jetson_response
 
+def start_idle_checker():
+    """Start the idle checker thread."""
+    global idle_check_thread
+    if idle_check_thread is None:
+        idle_check_thread = threading.Thread(target=_idle_checker, daemon=True)
+        idle_check_thread.start()
+        print("Idle stream checker started.")  # Use print since app.logger may not be ready yet
+
 if __name__ == '__main__':
-    start_idle_checker()  # <-- ADD THIS LINE
+    start_idle_checker()
     app.run(host='0.0.0.0', port=5001, debug=False)
