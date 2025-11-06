@@ -55,14 +55,6 @@ def _idle_checker():
                 except Exception as e:
                     app.logger.error(f"Failed to stop idle stream {camera_id}: {e}")
 
-def start_idle_checker():
-    """Start the idle checker thread."""
-    global idle_check_thread
-    if idle_check_thread is None:
-        idle_check_thread = threading.Thread(target=_idle_checker, daemon=True)
-        idle_check_thread.start()
-        app.logger.info("Idle stream checker started.")
-
 # --- Utility Functions ---
 
 def send_jetson_command(endpoint, json_data=None):
