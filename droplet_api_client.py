@@ -4,6 +4,7 @@
 from flask import Flask, request, jsonify, abort, Response
 import requests
 import time
+import threading
 import os
 from flask_cors import CORS 
 
@@ -30,6 +31,37 @@ DROPLET_HLS_PORT = 8000
 JETSON_API_TIMEOUT = 10 
 # Time to wait for FFmpeg to generate initial HLS segments before returning stream URL
 STREAM_INIT_WAIT_TIME = 5
+
+# --- Add timeout configuration ---
+STREAM_IDLE_TIMEOUT = 60  # Stop stream after 60 seconds with no requests
+
+# Track last request time per camera
+last_request_time = {}
+idle_check_thread = None
+
+def _idle_checker():
+    """Background thread that stops streams if no requests for STREAM_IDLE_TIMEOUT seconds."""
+    global last_request_time
+    while True:
+        time.sleep(10)  # Check every 10 seconds
+        current_time = time.time()
+        
+        for camera_id, last_time in list(last_request_time.items()):
+            if current_time - last_time > STREAM_IDLE_TIMEOUT:
+                app.logger.info(f"Stream {camera_id} idle for {STREAM_IDLE_TIMEOUT}s. Stopping...")
+                try:
+                    stop_stream_for_camera(camera_id)
+                    del last_request_time[camera_id]
+                except Exception as e:
+                    app.logger.error(f"Failed to stop idle stream {camera_id}: {e}")
+
+@app.before_first_request
+def startup_event():
+    """Start the idle checker thread on service startup."""
+    global idle_check_thread
+    idle_check_thread = threading.Thread(target=_idle_checker, daemon=True)
+    idle_check_thread.start()
+    app.logger.info("Idle stream checker started.")
 
 # --- Utility Functions ---
 
@@ -120,6 +152,45 @@ def stop_stream():
         error_message = jetson_response.get('error') or jetson_response.get('message')
         app.logger.error(f"Error stopping stream on Jetson: {error_message}")
         return jsonify(jetson_response), 500
+
+@app.route("/start_stream/<camera_id>", methods=['GET'])
+def start_stream_get_endpoint(camera_id: str):
+    """
+    GET endpoint to start a stream (alternative to POST for simpler browser testing).
+    Updates last_request_time to keep stream alive.
+    """
+    global last_request_time
+    
+    # Update last request timestamp (keeps stream alive)
+    last_request_time[camera_id] = time.time()
+    
+    app.logger.info(f"GET request to start stream for {camera_id}.")
+    
+    # Forward to Jetson API
+    jetson_response = send_jetson_command('/stream/start', {'camera_id': camera_id})
+    
+    if jetson_response.get('ok') is True:
+        app.logger.info(f"Jetson acknowledged. Waiting {STREAM_INIT_WAIT_TIME} seconds for HLS initialization...")
+        time.sleep(STREAM_INIT_WAIT_TIME)
+        
+        hls_url = f"http://{DROPLET_IP}:{DROPLET_HLS_PORT}/{camera_id}/playlist.m3u8"
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Stream successfully initialized and syncing.',
+            'hls_url': hls_url,
+            'camera_id': camera_id
+        }), 200
+    else:
+        error_message = jetson_response.get('error') or jetson_response.get('message')
+        app.logger.error(f"Error starting stream on Jetson: {error_message}")
+        return jsonify(jetson_response), 500
+
+def stop_stream_for_camera(camera_id: str):
+    """Stops a specific camera's stream by forwarding to Jetson API."""
+    app.logger.info(f"Stopping stream for {camera_id}")
+    jetson_response = send_jetson_command('/stream/stop', {'camera_id': camera_id})
+    return jetson_response
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5001, debug=False)
