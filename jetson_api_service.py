@@ -67,13 +67,21 @@ def api_start_stream():
         })
 
 
-@app.route("/stream/stop", methods=["POST"])
+@app.route('/stream/stop', methods=['POST'])
 def api_stop_stream():
-    with lock:
-        importlib.reload(jsm)
-        # stop_stream will stop rsync and ffmpeg
-        jsm.stop_stream()
-        return jsonify({"ok": True, "message": "stream stopped"})
+    """API endpoint to stop the current stream."""
+    data = request.get_json() or {}
+    camera_id = data.get('camera_id')
+    
+    if not camera_id:
+        return jsonify({'status': 'error', 'message': 'Missing camera_id'}), 400
+    
+    try:
+        jsm.stop_stream(camera_id)  # <-- ADD camera_id argument
+        return jsonify({'status': 'ok', 'message': f'Stream {camera_id} stopped successfully.'})
+    except Exception as e:
+        logging.error(f"Error stopping stream: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 @app.route("/stream/status", methods=["GET"])
