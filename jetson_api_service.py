@@ -9,6 +9,7 @@ import signal
 import threading
 import logging
 import importlib
+import sys
 
 # Import the existing stream manager module (does not run main because it guards with __main__)
 import jetson_stream_manager as jsm
