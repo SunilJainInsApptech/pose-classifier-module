@@ -55,13 +55,13 @@ def _idle_checker():
                 except Exception as e:
                     app.logger.error(f"Failed to stop idle stream {camera_id}: {e}")
 
-@app.before_first_request
-def startup_event():
-    """Start the idle checker thread on service startup."""
+def start_idle_checker():
+    """Start the idle checker thread."""
     global idle_check_thread
-    idle_check_thread = threading.Thread(target=_idle_checker, daemon=True)
-    idle_check_thread.start()
-    app.logger.info("Idle stream checker started.")
+    if idle_check_thread is None:
+        idle_check_thread = threading.Thread(target=_idle_checker, daemon=True)
+        idle_check_thread.start()
+        app.logger.info("Idle stream checker started.")
 
 # --- Utility Functions ---
 
@@ -193,4 +193,5 @@ def stop_stream_for_camera(camera_id: str):
     return jetson_response
 
 if __name__ == '__main__':
+    start_idle_checker()  # <-- ADD THIS LINE
     app.run(host='0.0.0.0', port=5001, debug=False)
