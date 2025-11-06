@@ -6,6 +6,7 @@
 import http.server
 import socketserver
 import os
+import requests
 
 # --- Configuration ---
 
@@ -15,6 +16,8 @@ PORT = 8000
 
 # Ensure the base directory exists
 os.makedirs(HLS_SERVE_DIR, exist_ok=True)
+
+DROPLET_API_URL = "http://127.0.0.1:5001"
 
 class HLSRequestHandler(http.server.SimpleHTTPRequestHandler):
     """
@@ -40,6 +43,24 @@ class HLSRequestHandler(http.server.SimpleHTTPRequestHandler):
         # from a different domain (the Droplet).
         self.send_header('Access-Control-Allow-Origin', '*') 
         super().end_headers()
+
+    def do_GET(self):
+        # Extract camera_id from the path (e.g., /Roof_Front_East_Facing/playlist.m3u8)
+        path_parts = self.path.strip('/').split('/')
+        if len(path_parts) >= 1:
+            camera_id = path_parts[0]
+            # Notify the droplet_api that this camera was just accessed
+            try:
+                requests.post(
+                    f"{DROPLET_API_URL}/stream/keepalive",
+                    json={'camera_id': camera_id},
+                    timeout=1
+                )
+            except Exception:
+                pass  # Ignore errors, don't block HLS serving
+        
+        # Serve the file as usual
+        super().do_GET()
 
 print(f"Starting HLS web server on port {PORT}")
 print(f"Serving content from directory: {HLS_SERVE_DIR}")

@@ -87,6 +87,8 @@ def start_stream():
     Receives a request to start a stream, forwards the command to the Jetson,
     waits for initialization, and returns the HLS URL.
     """
+    global last_request_time  # <-- ADD THIS
+    
     data = request.get_json()
     camera_id = data.get('camera_id')
 
@@ -94,6 +96,9 @@ def start_stream():
         return jsonify({'status': 'error', 'message': 'Missing camera_id'}), 400
 
     app.logger.info(f"Received request to start stream for {camera_id}.")
+    
+    # Update last request timestamp (keeps stream alive)
+    last_request_time[camera_id] = time.time()  # <-- ADD THIS
     
     # 1. Send command to Jetson
     jetson_response = send_jetson_command('/stream/start', {'camera_id': camera_id})
@@ -128,17 +133,23 @@ def start_stream():
 @app.route('/stream/stop', methods=['POST'])
 def stop_stream():
     """
-    Receives a request to stop the current stream and forwards the command to the Jetson.
+    Receives a request to stop a stream and forwards the command to the Jetson.
     """
-    app.logger.info("Received request to stop stream.")
+    data = request.get_json()
+    camera_id = data.get('camera_id')
     
-    # Send command to Jetson
-    jetson_response = send_jetson_command('/stream/stop')
+    if not camera_id:
+        return jsonify({'status': 'error', 'message': 'Missing camera_id'}), 400
+    
+    app.logger.info(f"Received request to stop stream for {camera_id}.")
+    
+    # Send command to Jetson with camera_id
+    jetson_response = send_jetson_command('/stream/stop', {'camera_id': camera_id})
     
     if jetson_response.get('status') == 'ok' or jetson_response.get('status') == 'success':
         return jsonify({
             'status': 'success',
-            'message': 'Stream successfully stopped on Jetson.'
+            'message': f'Stream {camera_id} successfully stopped on Jetson.'
         })
     else:
         error_message = jetson_response.get('error') or jetson_response.get('message')
@@ -177,6 +188,20 @@ def start_stream_get_endpoint(camera_id: str):
         error_message = jetson_response.get('error') or jetson_response.get('message')
         app.logger.error(f"Error starting stream on Jetson: {error_message}")
         return jsonify(jetson_response), 500
+
+@app.route('/stream/keepalive', methods=['POST'])
+def keepalive_stream():
+    """Internal endpoint: HLS server notifies when a camera stream is accessed."""
+    global last_request_time
+    
+    data = request.get_json()
+    camera_id = data.get('camera_id')
+    
+    if camera_id:
+        last_request_time[camera_id] = time.time()
+        # Don't log every segment request (too noisy), just update timestamp
+    
+    return jsonify({'status': 'ok'}), 200
 
 def stop_stream_for_camera(camera_id: str):
     """Stops a specific camera's stream by forwarding to Jetson API."""

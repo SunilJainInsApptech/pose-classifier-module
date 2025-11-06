@@ -99,13 +99,16 @@ def api_status():
 
 
 def shutdown_handler(signum, frame):
-    logging.info("Signal received, stopping stream and exiting.")
+    """Gracefully stop all streams on SIGTERM or SIGINT."""
+    logging.info("Signal received, stopping all streams and exiting.")
     try:
-        jsm.stop_stream()
-    except Exception:
-        logging.exception("Error stopping stream during shutdown.")
-    # terminate Flask gracefully
-    os._exit(0)
+        # Stop all active streams
+        for camera_id in list(jsm.ffmpeg_processes.keys()):
+            jsm.stop_stream(camera_id)
+        logging.info("All streams stopped.")
+    except Exception as e:
+        logging.error(f"Error stopping streams during shutdown: {e}")
+    sys.exit(0)
 
 
 if __name__ == "__main__":
