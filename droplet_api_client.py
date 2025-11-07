@@ -28,7 +28,7 @@ DROPLET_IP = '104.236.30.246'
 DROPLET_HLS_PORT = 8000
 
 # Timeout for Jetson API calls (seconds)
-JETSON_API_TIMEOUT = 10 
+JETSON_API_TIMEOUT = 30  # Increased from 10 to 30
 # Time to wait for FFmpeg to generate initial HLS segments before returning stream URL
 STREAM_INIT_WAIT_TIME = 5
 

@@ -20,6 +20,8 @@ HLS_OUTPUT_BASE_DIR = '/home/sunil/streams/hls_output'
 # Placeholder map of Camera ID (used by web app) to its RTSP URL
 # You MUST replace these with your actual RTSP URLs
 CAMERA_URLS = {
+    'Lobby_Center_North': 'rtsp://70.19.68.121:554/chID=25&streamType=sub',
+    'CPW_Awning_N_Facing': 'rtsp://70.19.68.121:554/chID=16&streamType=sub',
     'Roof_Front_East_Facing': 'rtsp://70.19.68.121:554/chID=01&streamType=sub',
 }
 
@@ -37,10 +39,10 @@ FFMPEG_PARAMS = [
     '-c:v', 'copy',             
     '-an',                      
     '-f', 'hls',                
-    '-hls_time', '2',
-    '-hls_list_size', '5',
+    '-hls_time', '4',
+    '-hls_list_size', '6',
     '-hls_flags', 'delete_segments+split_by_time',
-    '-hls_delete_threshold', '1',
+    '-hls_delete_threshold', '2',
     '-hls_base_url', '',        
     '-map', '0:v:0'             
 ]
@@ -52,8 +54,7 @@ watchdog_threads = {}    # camera_id -> thread
 stream_locks = {}        # camera_id -> lock
 
 # --- Watchdog Globals ---
-watchdog_thread = None
-keep_running = False
+keep_running = True
 
 
 # --- WATCHDOG IMPLEMENTATION ---
@@ -136,16 +137,19 @@ def start_sync_job(camera_id, source_dir):
     Starts a continuous rsync job in a subprocess to push files 
     from the Jetson to the Droplet. (Retained original logic).
     """
-    global rsync_process
     
     # Destination directory on the Droplet
     dest_path = f"{DROPLET_USER}@{DROPLET_IP}:{DROPLET_HLS_SERVE_DIR}/{camera_id}"
     
+    # Enhanced rsync command with better error handling
     rsync_command = [
         'rsync',
-        '-azW',
+        '-avz',  # Archive mode, verbose, compress
+        '--timeout=30',  # Add timeout for stuck transfers
         '--delete',
         '--delay-updates',
+        '--partial',  # Keep partially transferred files
+        '--partial-dir=.rsync-partial',  # Store partial files in hidden dir
         # Ensure trailing slash on source to sync contents, not the folder itself
         f"{source_dir}/", 
         dest_path
@@ -154,13 +158,23 @@ def start_sync_job(camera_id, source_dir):
     def run_rsync_loop(cmd):
         logging.info(f"Starting continuous rsync job for {camera_id} to {DROPLET_IP}")
         
-        # Add the SSH key argument
-        cmd_with_key = cmd + ['-e', f'ssh -o StrictHostKeyChecking=no -i {RSYNC_SSH_KEY_PATH}']
+        # Enhanced SSH options
+        ssh_opts = (
+            f'ssh -o StrictHostKeyChecking=no '
+            f'-o ServerAliveInterval=15 '
+            f'-o ServerAliveCountMax=3 '
+            f'-o ConnectTimeout=10 '
+            f'-i {RSYNC_SSH_KEY_PATH}'
+        )
+        cmd_with_key = cmd + ['-e', ssh_opts]
         
         # Add the check flag for the rsync thread
         current_thread = threading.current_thread()
         if not hasattr(current_thread, 'stop_event'):
             current_thread.stop_event = threading.Event()
+        
+        consecutive_failures = 0
+        max_consecutive_failures = 5
             
         while True:
             # Check if we've been signaled to stop
@@ -170,34 +184,64 @@ def start_sync_job(camera_id, source_dir):
                 
             try:
                 # Use subprocess.run for a single execution, wait for completion
-                subprocess.run(
+                result = subprocess.run(
                     cmd_with_key, 
                     check=True, 
-                    stdout=subprocess.DEVNULL, 
-                    stderr=subprocess.DEVNULL, 
-                    timeout=10 # Increased timeout slightly for reliable network operation
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, 
+                    timeout=60,  # Increased timeout for larger transfers
+                    text=True
                 )
+                
+                # Reset failure counter on success
+                if consecutive_failures > 0:
+                    logging.info(f"Rsync recovered for {camera_id}")
+                    consecutive_failures = 0
+                
             except subprocess.TimeoutExpired:
-                logging.warning("Rsync Warning: Command timed out. Retrying...")
+                consecutive_failures += 1
+                logging.warning(f"Rsync timeout for {camera_id} ({consecutive_failures}/{max_consecutive_failures})")
+                
             except subprocess.CalledProcessError as e:
-                logging.error(f"Rsync Error (retry in 1s): Command failed: return code {e.returncode}")
+                consecutive_failures += 1
+                # Log stderr for debugging
+                stderr_output = e.stderr if hasattr(e, 'stderr') else 'No stderr'
+                logging.error(
+                    f"Rsync failed for {camera_id} (exit {e.returncode}, "
+                    f"{consecutive_failures}/{max_consecutive_failures}): {stderr_output[:200]}"
+                )
+                
             except FileNotFoundError:
                 logging.error("Rsync Error: rsync command not found. Is it installed?")
+                break  # Fatal error, stop trying
+                
             except Exception as e:
-                logging.error(f"Rsync Error: Unexpected exception: {e}")
+                consecutive_failures += 1
+                logging.error(f"Rsync unexpected error for {camera_id}: {e}")
             
-            time.sleep(1) # Short delay before the next sync attempt
+            # If too many failures, pause longer before retry
+            if consecutive_failures >= max_consecutive_failures:
+                logging.error(
+                    f"Rsync for {camera_id} failed {max_consecutive_failures} times. "
+                    f"Pausing for 30 seconds..."
+                )
+                time.sleep(30)
+                consecutive_failures = 0  # Reset counter
+            else:
+                time.sleep(2)  # Normal retry delay
 
     # Create and start the thread
-    rsync_thread = threading.Thread(target=run_rsync_loop, args=(rsync_command,))
+    rsync_thread = threading.Thread(target=run_rsync_loop, args=(rsync_command,), daemon=True)
     rsync_thread.stop_event = threading.Event()
-    rsync_thread.daemon = True
-    rsync_processes[camera_id] = rsync_thread  # <-- CHANGE: use dictionary
+    rsync_processes[camera_id] = rsync_thread
     rsync_thread.start()
+    logging.info(f"Rsync thread started for {camera_id}")
 
 
 def start_stream(camera_id):
     """Starts the FFmpeg subprocess for the given camera ID."""
+    global keep_running
+    
     if camera_id not in stream_locks:
         stream_locks[camera_id] = threading.Lock()
     
@@ -212,11 +256,22 @@ def start_stream(camera_id):
         playlist_path = os.path.join(output_dir, 'playlist.m3u8')
         
         try:
-            # Start FFmpeg using the new per-camera function
+            # Start FFmpeg
             _start_ffmpeg_for_camera(camera_id, playlist_path)
             
             # Start rsync
             start_sync_job(camera_id, output_dir)
+            
+            # Start watchdog
+            keep_running = True
+            watchdog_thread = threading.Thread(
+                target=_monitor_ffmpeg, 
+                args=(camera_id, playlist_path),
+                daemon=True
+            )
+            watchdog_threads[camera_id] = watchdog_thread
+            watchdog_thread.start()
+            logging.info(f"Watchdog thread started for {camera_id}")
             
             return output_dir
             
@@ -227,12 +282,22 @@ def start_stream(camera_id):
 
 def stop_stream(camera_id):
     """Stops the stream for a specific camera."""
+    global keep_running
+    
     with stream_locks.get(camera_id, threading.Lock()):
+        # Stop watchdog
+        if camera_id in watchdog_threads:
+            keep_running = False
+            watchdog_threads[camera_id].join(timeout=2)
+            del watchdog_threads[camera_id]
+            logging.info(f"Stopped watchdog for {camera_id}")
+        
         # Stop rsync
         if camera_id in rsync_processes:
             rsync_processes[camera_id].stop_event.set()
             rsync_processes[camera_id].join(timeout=5)
             del rsync_processes[camera_id]
+            logging.info(f"Stopped rsync for {camera_id}")
         
         # Stop FFmpeg
         if camera_id in ffmpeg_processes:
@@ -244,7 +309,7 @@ def stop_stream(camera_id):
                 except Exception:
                     proc.kill()
             del ffmpeg_processes[camera_id]
-            logging.info(f"Stopped stream for {camera_id}")
+            logging.info(f"Stopped FFmpeg for {camera_id}")
 
 def main_loop(camera_id):
     """Simple loop for demonstration, in a real scenario this would be an API listener."""
@@ -270,7 +335,7 @@ def main_loop(camera_id):
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python jetson_stream_manager.py <camera_id>")
-        print("Example: python jetson_stream_manager.py ch01")
+        print("Example: python jetson_stream_manager.py Roof_Front_East_Facing")
         sys.exit(1)
         
     requested_camera = sys.argv[1]
