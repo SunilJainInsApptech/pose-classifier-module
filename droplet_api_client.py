@@ -1,222 +1,248 @@
-# Flask API for the Droplet (Public Server). 
-# This script receives public requests and forwards commands securely to the Jetson API.
+# Flask API for Direct RTSP-to-HLS Streaming on Droplet
+# No Jetson dependency - streams cameras directly from the Droplet
 
-from flask import Flask, request, jsonify, abort, Response
-import requests
-import time
+from flask import Flask, jsonify
+import subprocess
 import threading
+import time
 import os
-from flask_cors import CORS 
+import shutil
+from flask_cors import CORS
 
 app = Flask(__name__)
-# This line tells Flask to allow cross-origin requests from any domain (*)
-CORS(app) 
+CORS(app)
 
 # --- Configuration ---
 
-# 1. Jetson API URL - **FIXED TO USE REVERSE SSH TUNNEL ENDPOINT**
-# The reverse SSH tunnel forwards traffic from Droplet's 50000 port
-# to the Jetson's 5000 port.
-JETSON_API_URL = "http://127.0.0.1:50000"
+# Camera RTSP URLs
+CAMERA_URLS = {
+    'Lobby_Center_North': 'rtsp://70.19.68.121:554/chID=25&streamType=sub',
+    'CPW_Awning_N_Facing': 'rtsp://70.19.68.121:554/chID=16&streamType=sub',
+    'Roof_Front_East_Facing': 'rtsp://70.19.68.121:554/chID=01&streamType=sub',
+}
 
-# 2. Security Secret (MUST MATCH the one set in jetson_api_service.py)
-API_SECRET = 'your-strong-secret'  # <-- Replace with your actual secret
-
-# 3. Droplet Public URL Configuration
-# This is used to build the final HLS stream URL for the client.
-DROPLET_IP = '104.236.30.246' 
+# HLS Output Configuration
+DROPLET_IP = '104.236.30.246'
 DROPLET_HLS_PORT = 8000
+HLS_OUTPUT_DIR = '/var/www/html/hls'  # Served by nginx on port 8000
 
-# Timeout for Jetson API calls (seconds)
-JETSON_API_TIMEOUT = 30  # Increased from 10 to 30
-# Time to wait for FFmpeg to generate initial HLS segments before returning stream URL
-STREAM_INIT_WAIT_TIME = 5
-
-# --- Add timeout configuration ---
+# Stream Management
 STREAM_IDLE_TIMEOUT = 60  # Stop stream after 60 seconds with no requests
+STREAM_INIT_WAIT_TIME = 3  # Wait for initial segments
 
-# Track last request time per camera
+# Active FFmpeg processes {camera_id: subprocess.Popen}
+active_streams = {}
 last_request_time = {}
-idle_check_thread = None
+stream_locks = {}
 
-def _idle_checker():
-    """Background thread that stops streams if no requests for STREAM_IDLE_TIMEOUT seconds."""
-    global last_request_time
+# --- FFmpeg Management ---
+
+def start_ffmpeg_stream(camera_id: str, rtsp_url: str):
+    """Start FFmpeg process to convert RTSP to HLS."""
+    
+    if camera_id in active_streams:
+        app.logger.info(f"Stream {camera_id} already running.")
+        return True
+    
+    # Create output directory
+    output_dir = os.path.join(HLS_OUTPUT_DIR, camera_id)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Clear old segments
+    for file in os.listdir(output_dir):
+        file_path = os.path.join(output_dir, file)
+        try:
+            os.remove(file_path)
+        except Exception as e:
+            app.logger.warning(f"Could not delete {file_path}: {e}")
+    
+    playlist_path = os.path.join(output_dir, 'playlist.m3u8')
+    segment_pattern = os.path.join(output_dir, 'segment_%03d.ts')
+    
+    ffmpeg_cmd = [
+        'ffmpeg',
+        '-rtsp_transport', 'tcp',
+        '-i', rtsp_url,
+        '-c:v', 'copy',  # Copy video codec (no re-encoding)
+        '-c:a', 'aac',   # Encode audio to AAC
+        '-f', 'hls',
+        '-hls_time', '2',  # 2-second segments
+        '-hls_list_size', '5',  # Keep last 5 segments in playlist
+        '-hls_flags', 'delete_segments',  # Auto-delete old segments
+        '-hls_segment_filename', segment_pattern,
+        playlist_path
+    ]
+    
+    try:
+        process = subprocess.Popen(
+            ffmpeg_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        active_streams[camera_id] = process
+        stream_locks[camera_id] = threading.Lock()
+        
+        app.logger.info(f"Started FFmpeg for {camera_id} (PID: {process.pid})")
+        return True
+        
+    except Exception as e:
+        app.logger.error(f"Failed to start FFmpeg for {camera_id}: {e}")
+        return False
+
+def stop_ffmpeg_stream(camera_id: str):
+    """Stop FFmpeg process for a camera."""
+    
+    if camera_id not in active_streams:
+        return {'status': 'ok', 'message': f'Stream {camera_id} not running'}
+    
+    try:
+        process = active_streams[camera_id]
+        process.terminate()
+        process.wait(timeout=5)
+        
+        del active_streams[camera_id]
+        if camera_id in stream_locks:
+            del stream_locks[camera_id]
+        
+        # Clean up HLS files
+        output_dir = os.path.join(HLS_OUTPUT_DIR, camera_id)
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        
+        app.logger.info(f"Stopped FFmpeg for {camera_id}")
+        return {'status': 'success', 'message': f'Stream {camera_id} stopped'}
+        
+    except Exception as e:
+        app.logger.error(f"Error stopping {camera_id}: {e}")
+        return {'status': 'error', 'message': str(e)}
+
+# --- Idle Stream Checker ---
+
+def idle_checker():
+    """Background thread that stops idle streams."""
     while True:
-        time.sleep(10)  # Check every 10 seconds
+        time.sleep(10)
         current_time = time.time()
         
         for camera_id, last_time in list(last_request_time.items()):
             if current_time - last_time > STREAM_IDLE_TIMEOUT:
                 app.logger.info(f"Stream {camera_id} idle for {STREAM_IDLE_TIMEOUT}s. Stopping...")
                 try:
-                    stop_stream_for_camera(camera_id)
+                    stop_ffmpeg_stream(camera_id)
                     del last_request_time[camera_id]
                 except Exception as e:
                     app.logger.error(f"Failed to stop idle stream {camera_id}: {e}")
 
-# --- Utility Functions ---
-
-def send_jetson_command(endpoint, json_data=None):
-    """Sends an authenticated POST request to the Jetson API."""
-    try:
-        # The endpoint argument includes the leading slash, e.g., '/stream/start'
-        headers = {'X-API-Secret': API_SECRET}
-        response = requests.post(
-            f"{JETSON_API_URL}{endpoint}",
-            json=json_data,
-            headers=headers,
-            timeout=JETSON_API_TIMEOUT
-        )
-        response.raise_for_status() # Raise exception for bad status codes (4xx or 5xx)
-        return response.json()
-    except requests.exceptions.Timeout:
-        return {'status': 'error', 'message': 'Jetson API command timed out.'}
-    except requests.exceptions.RequestException as e:
-        # Log the detailed connection error message
-        app.logger.error(f"Error connecting to Jetson API via tunnel: {e}")
-        return {'status': 'error', 'message': f'Failed to connect to Jetson API via tunnel: {e}'}
-    except Exception as e:
-        return {'status': 'error', 'message': f'An unexpected error occurred: {e}'}
-
-# --- Droplet API Endpoints ---
+# --- API Endpoints ---
 
 @app.route('/stream/start', methods=['POST'])
 def start_stream():
-    """
-    Receives a request to start a stream, forwards the command to the Jetson,
-    waits for initialization, and returns the HLS URL.
-    """
-    global last_request_time  # <-- ADD THIS
+    """Start streaming a camera."""
+    from flask import request
     
-    data = request.get_json()
-    camera_id = data.get('camera_id')
-
-    if not camera_id:
-        return jsonify({'status': 'error', 'message': 'Missing camera_id'}), 400
-
-    app.logger.info(f"Received request to start stream for {camera_id}.")
-    
-    # Update last request timestamp (keeps stream alive)
-    last_request_time[camera_id] = time.time()  # <-- ADD THIS
-    
-    # 1. Send command to Jetson
-    jetson_response = send_jetson_command('/stream/start', {'camera_id': camera_id})
-
-    # --- FIX: Check for the 'ok': true status returned by the Jetson API ---
-    if jetson_response.get('ok') is True: # Primary success check
-    # We still check for 'status' == 'success' for other endpoints, but 'ok' is primary for start
-    
-        # 2. Wait for FFmpeg to generate initial segments
-        app.logger.info(f"Jetson acknowledged. Waiting {STREAM_INIT_WAIT_TIME} seconds for HLS initialization...")
-        time.sleep(STREAM_INIT_WAIT_TIME)
-        
-        # 3. Construct the public HLS URL
-        hls_url = f"http://{DROPLET_IP}:{DROPLET_HLS_PORT}/{camera_id}/playlist.m3u8"
-        
-        return jsonify({
-            'status': 'success',
-            'message': f'Stream successfully initialized and syncing. URL provided.',
-            'hls_url': hls_url
-        }), 200 # <-- Explicitly returning 200 OK
-
-    else:
-        # 4. Handle errors from Jetson
-        # The Jetson API uses the key 'error' and 'ok', so we adapt here
-        error_message = jetson_response.get('error') or jetson_response.get('message')
-        app.logger.error(f"Error starting stream on Jetson: {error_message}")
-        # Note: We return the response JSON from the Jetson, but the HTTP status should reflect the error.
-        # Since the Jetson API returned 200 and the failure is internal to the Droplet's logic 
-        # (which is now fixed), this 'else' should now only catch actual Jetson errors.
-        return jsonify(jetson_response), 500
-
-@app.route('/stream/stop', methods=['POST'])
-def stop_stream():
-    """
-    Receives a request to stop a stream and forwards the command to the Jetson.
-    """
     data = request.get_json()
     camera_id = data.get('camera_id')
     
     if not camera_id:
         return jsonify({'status': 'error', 'message': 'Missing camera_id'}), 400
     
-    app.logger.info(f"Received request to stop stream for {camera_id}.")
+    if camera_id not in CAMERA_URLS:
+        return jsonify({'status': 'error', 'message': f'Unknown camera: {camera_id}'}), 404
     
-    # Send command to Jetson with camera_id
-    jetson_response = send_jetson_command('/stream/stop', {'camera_id': camera_id})
-    
-    if jetson_response.get('status') == 'ok' or jetson_response.get('status') == 'success':
-        return jsonify({
-            'status': 'success',
-            'message': f'Stream {camera_id} successfully stopped on Jetson.'
-        })
-    else:
-        error_message = jetson_response.get('error') or jetson_response.get('message')
-        app.logger.error(f"Error stopping stream on Jetson: {error_message}")
-        return jsonify(jetson_response), 500
-
-@app.route("/start_stream/<camera_id>", methods=['GET'])
-def start_stream_get_endpoint(camera_id: str):
-    """
-    GET endpoint to start a stream (alternative to POST for simpler browser testing).
-    Updates last_request_time to keep stream alive.
-    """
-    global last_request_time
-    
-    # Update last request timestamp (keeps stream alive)
+    rtsp_url = CAMERA_URLS[camera_id]
     last_request_time[camera_id] = time.time()
     
-    app.logger.info(f"GET request to start stream for {camera_id}.")
+    # Start FFmpeg
+    success = start_ffmpeg_stream(camera_id, rtsp_url)
     
-    # Forward to Jetson API
-    jetson_response = send_jetson_command('/stream/start', {'camera_id': camera_id})
+    if success:
+        time.sleep(STREAM_INIT_WAIT_TIME)  # Wait for initial segments
+        
+        hls_url = f"http://{DROPLET_IP}:{DROPLET_HLS_PORT}/{camera_id}/playlist.m3u8"
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Stream started',
+            'hls_url': hls_url
+        }), 200
+    else:
+        return jsonify({'status': 'error', 'message': 'Failed to start FFmpeg'}), 500
+
+@app.route('/start_stream/<camera_id>', methods=['GET'])
+def start_stream_get(camera_id: str):
+    """GET endpoint to start a stream."""
     
-    if jetson_response.get('ok') is True:
-        app.logger.info(f"Jetson acknowledged. Waiting {STREAM_INIT_WAIT_TIME} seconds for HLS initialization...")
+    if camera_id not in CAMERA_URLS:
+        return jsonify({'status': 'error', 'message': f'Unknown camera: {camera_id}'}), 404
+    
+    rtsp_url = CAMERA_URLS[camera_id]
+    last_request_time[camera_id] = time.time()
+    
+    success = start_ffmpeg_stream(camera_id, rtsp_url)
+    
+    if success:
         time.sleep(STREAM_INIT_WAIT_TIME)
         
         hls_url = f"http://{DROPLET_IP}:{DROPLET_HLS_PORT}/{camera_id}/playlist.m3u8"
         
         return jsonify({
             'status': 'success',
-            'message': f'Stream successfully initialized and syncing.',
+            'message': 'Stream started',
             'hls_url': hls_url,
             'camera_id': camera_id
         }), 200
     else:
-        error_message = jetson_response.get('error') or jetson_response.get('message')
-        app.logger.error(f"Error starting stream on Jetson: {error_message}")
-        return jsonify(jetson_response), 500
+        return jsonify({'status': 'error', 'message': 'Failed to start FFmpeg'}), 500
+
+@app.route('/stream/stop', methods=['POST'])
+def stop_stream():
+    """Stop streaming a camera."""
+    from flask import request
+    
+    data = request.get_json()
+    camera_id = data.get('camera_id')
+    
+    if not camera_id:
+        return jsonify({'status': 'error', 'message': 'Missing camera_id'}), 400
+    
+    result = stop_ffmpeg_stream(camera_id)
+    
+    if camera_id in last_request_time:
+        del last_request_time[camera_id]
+    
+    return jsonify(result)
 
 @app.route('/stream/keepalive', methods=['POST'])
 def keepalive_stream():
-    """Internal endpoint: HLS server notifies when a camera stream is accessed."""
-    global last_request_time
+    """Update last access time for a camera."""
+    from flask import request
     
     data = request.get_json()
     camera_id = data.get('camera_id')
     
     if camera_id:
         last_request_time[camera_id] = time.time()
-        # Don't log every segment request (too noisy), just update timestamp
     
     return jsonify({'status': 'ok'}), 200
 
-def stop_stream_for_camera(camera_id: str):
-    """Stops a specific camera's stream by forwarding to Jetson API."""
-    app.logger.info(f"Stopping stream for {camera_id}")
-    jetson_response = send_jetson_command('/stream/stop', {'camera_id': camera_id})
-    return jetson_response
+@app.route('/stream/status', methods=['GET'])
+def stream_status():
+    """Get status of all active streams."""
+    status = {
+        'active_streams': list(active_streams.keys()),
+        'last_access': {k: time.time() - v for k, v in last_request_time.items()}
+    }
+    return jsonify(status)
 
-def start_idle_checker():
-    """Start the idle checker thread."""
-    global idle_check_thread
-    if idle_check_thread is None:
-        idle_check_thread = threading.Thread(target=_idle_checker, daemon=True)
-        idle_check_thread.start()
-        print("Idle stream checker started.")  # Use print since app.logger may not be ready yet
+# --- Startup ---
 
 if __name__ == '__main__':
-    start_idle_checker()
+    # Start idle checker thread
+    checker_thread = threading.Thread(target=idle_checker, daemon=True)
+    checker_thread.start()
+    print("Idle stream checker started")
+    
+    # Create HLS output directory
+    os.makedirs(HLS_OUTPUT_DIR, exist_ok=True)
+    
     app.run(host='0.0.0.0', port=5001, debug=False)
