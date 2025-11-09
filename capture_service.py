@@ -25,6 +25,35 @@ RTSP_STREAMS = {
     # Add other stream names and URLs here
 }
 
+CAMERAS_AVAILABLE_TO_STREAM = {
+    'CPW_Awning_N_Facing': 'rtsp://70.19.68.121:554/chID=16&streamType=sub',
+	'CPW_South_Cam': 'rtsp://70.19.68.121:554/chID=7&streamType=sub',
+	'66th_St_East_Facing': 'rtsp://70.19.68.121:554/chID=28&streamType=sub',
+	'Service_Staircase_Top': 'rtsp://70.19.68.121:554/chID=15&streamType=sub',
+	'Service_Staircase_Bottom': 'rtsp://70.19.68.121:554/chID=26&streamType=sub',
+	'Main_Entrance': 'rtsp://70.19.68.121:554/chID=23&streamType=sub',
+	'Concierge': 'rtsp://70.19.68.121:554/chID=13&streamType=sub',
+	'Package_Room': 'rtsp://70.19.68.121:554/chID=8&streamType=sub',
+	'Bike_Room': 'rtsp://70.19.68.121:554/chID=11&streamType=sub',
+	'Lobby_Center_North': 'rtsp://70.19.68.121:554/chID=25&streamType=sub',
+	'Lobby_Center_South': 'rtsp://70.19.68.121:554/chID=21&streamType=sub',
+	'Lobby_ABCD_Side': 'rtsp://70.19.68.121:554/chID=19&streamType=sub',
+	'Lobby_EFG_Side': 'rtsp://70.19.68.121:554/chID=18&streamType=sub',
+	'North_Elevator': 'rtsp://70.19.68.121:554/chID=35&streamType=sub',
+	'South_Elevator': 'rtsp://70.19.68.121:554/chID=36&streamType=sub',
+	'Services_Area': 'rtsp://70.19.68.121:554/chID=9&streamType=sub',
+	'Basement_Hallway': 'rtsp://70.19.68.121:554/chID=31&streamType=sub',
+	'ABCD_Basement_Hallway': 'rtsp://70.19.68.121:554/chID=32&streamType=sub',
+	'Basement_EFG_Side': 'rtsp://70.19.68.121:554/chID=24&streamType=sub',
+	'EFG_Basement_Hallway': 'rtsp://70.19.68.121:554/chID=27&streamType=sub',
+	'Roof_Front_East_Facing': 'rtsp://70.19.68.121:554/chID=1&streamType=sub',
+	'Roof_Front_North_Facing': 'rtsp://70.19.68.121:554/chID=2&streamType=sub',
+	'Roof_South_Side': 'rtsp://70.19.68.121:554/chID=4&streamType=sub',
+	'Roof_Center_East_Facing': 'rtsp://70.19.68.121:554/chID=12&streamType=sub',
+	'Courtyard_1': 'rtsp://70.19.68.121:554/chID=22&streamType=sub',
+	'Courtyard_2': 'rtsp://70.19.68.121:554/chID=30&streamType=sub',
+}
+
 # --- UPDATED GSTREAMER PIPELINE ---
 # Simplified pipeline for Jetson:
 # - Use protocols=tcp to avoid UDP packet loss issues
@@ -136,7 +165,7 @@ app.add_middleware(
 @app.get("/cameras")
 async def get_cameras():
     """Returns a JSON object of available camera names and their RTSP URLs."""
-    return RTSP_STREAMS
+    return CAMERAS_AVAILABLE_TO_STREAM
 
 @app.get("/frame/{camera_name}",
          responses={
