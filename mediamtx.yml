@@ -1,0 +1,194 @@
+# MediaMTX Configuration for RigGuardian Camera Streaming
+# Deploy this to /etc/mediamtx/mediamtx.yml
+
+###############################################
+# General Configuration
+###############################################
+
+# Log level: debug, info, warn, error
+logLevel: info
+logDestinations: [stdout]
+
+# API server for control/monitoring
+api: yes
+apiAddress: 127.0.0.1:9997
+
+# Metrics for monitoring (optional)
+metrics: no
+
+###############################################
+# RTSP Server Configuration
+###############################################
+
+# RTSP server (receives/serves RTSP streams)
+rtspAddress: :8554
+rtspTransports: [tcp]
+rtspEncryption: "no"
+
+###############################################
+# HLS Configuration (fallback if needed)
+###############################################
+
+# HLS server for browsers that might need it
+hls: yes
+hlsAddress: :8888
+hlsAlwaysRemux: no
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+
+# Serve HLS on main HTTP port
+hlsServerKey: server.key
+hlsServerCert: server.crt
+hlsAllowOrigin: "*"
+hlsEncryption: no
+
+###############################################
+# WebRTC Configuration (Primary)
+###############################################
+
+# WebRTC server for ultra-low latency streaming
+webrtc: yes
+webrtcAddress: :8889
+
+# Allow all origins (adjust for production security)
+webrtcAllowOrigin: "*"
+
+# ICE servers for NAT traversal
+webrtcICEServers2:
+  - url: stun:stun.l.google.com:19302
+
+# Public IP for NAT traversal - REQUIRED for droplets behind NAT
+webrtcAdditionalHosts: [104.236.30.246]
+
+# UDP port range for WebRTC media
+webrtcLocalUDPPort: 8189
+webrtcLocalTCPPort: 8189
+
+###############################################
+# Path Defaults (for all camera streams)
+###############################################
+
+# Default settings for all paths (cameras)
+pathDefaults:
+  # Source configuration
+  source: publisher
+  sourceOnDemand: yes
+  sourceOnDemandStartTimeout: 10s
+  sourceOnDemandCloseAfter: 10s
+
+  # Recording (disabled by default)
+  record: no
+
+###############################################
+# Camera Path Configurations
+###############################################
+
+paths:
+  # Each camera only needs to specify its unique RTSP source
+  # All other settings are inherited from pathDefaults
+
+  CPW_Awning_N_Facing:
+    source: rtsp://70.19.68.121:554/chID=16&streamType=sub
+    rtspTransport: tcp
+
+  CPW_South_Cam:
+    source: rtsp://70.19.68.121:554/chID=7&streamType=sub
+    rtspTransport: tcp
+
+  66th_St_East_Facing:
+    source: rtsp://70.19.68.121:554/chID=28&streamType=sub
+    rtspTransport: tcp
+
+  Service_Staircase_Top:
+    source: rtsp://70.19.68.121:554/chID=15&streamType=sub
+    rtspTransport: tcp
+
+  Service_Staircase_Bottom:
+    source: rtsp://70.19.68.121:554/chID=26&streamType=sub
+    rtspTransport: tcp
+
+  Main_Entrance:
+    source: rtsp://70.19.68.121:554/chID=23&streamType=sub
+    rtspTransport: tcp
+
+  Concierge:
+    source: rtsp://70.19.68.121:554/chID=13&streamType=sub
+    rtspTransport: tcp
+
+  Package_Room:
+    source: rtsp://70.19.68.121:554/chID=8&streamType=sub
+    rtspTransport: tcp
+
+  Bike_Room:
+    source: rtsp://70.19.68.121:554/chID=11&streamType=sub
+    rtspTransport: tcp
+
+  Lobby_Center_North:
+    source: rtsp://70.19.68.121:554/chID=25&streamType=sub
+    rtspTransport: tcp
+
+  Lobby_Center_South:
+    source: rtsp://70.19.68.121:554/chID=21&streamType=sub
+    rtspTransport: tcp
+
+  Lobby_ABCD_Side:
+    source: rtsp://70.19.68.121:554/chID=19&streamType=sub
+    rtspTransport: tcp
+
+  Lobby_EFG_Side:
+    source: rtsp://70.19.68.121:554/chID=18&streamType=sub
+    rtspTransport: tcp
+
+  North_Elevator:
+    source: rtsp://70.19.68.121:554/chID=35&streamType=sub
+    rtspTransport: tcp
+
+  South_Elevator:
+    source: rtsp://70.19.68.121:554/chID=36&streamType=sub
+    rtspTransport: tcp
+
+  Services_Area:
+    source: rtsp://70.19.68.121:554/chID=9&streamType=sub
+    rtspTransport: tcp
+
+  Basement_Hallway:
+    source: rtsp://70.19.68.121:554/chID=31&streamType=sub
+    rtspTransport: tcp
+
+  ABCD_Basement_Hallway:
+    source: rtsp://70.19.68.121:554/chID=32&streamType=sub
+    rtspTransport: tcp
+
+  Basement_EFG_Side:
+    source: rtsp://70.19.68.121:554/chID=24&streamType=sub
+    rtspTransport: tcp
+
+  EFG_Basement_Hallway:
+    source: rtsp://70.19.68.121:554/chID=27&streamType=sub
+    rtspTransport: tcp
+
+  Roof_Front_East_Facing:
+    source: rtsp://70.19.68.121:554/chID=1&streamType=sub
+    rtspTransport: tcp
+
+  Roof_Front_North_Facing:
+    source: rtsp://70.19.68.121:554/chID=2&streamType=sub
+    rtspTransport: tcp
+
+  Roof_South_Side:
+    source: rtsp://70.19.68.121:554/chID=4&streamType=sub
+    rtspTransport: tcp
+
+  Roof_Center_East_Facing:
+    source: rtsp://70.19.68.121:554/chID=12&streamType=sub
+    rtspTransport: tcp
+
+  Courtyard_1:
+    source: rtsp://70.19.68.121:554/chID=22&streamType=sub
+    rtspTransport: tcp
+
+  Courtyard_2:
+    source: rtsp://70.19.68.121:554/chID=30&streamType=sub
+    rtspTransport: tcp
