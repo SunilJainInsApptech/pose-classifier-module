@@ -62,7 +62,9 @@ CAMERAS_AVAILABLE_TO_STREAM = {
 GSTREAMER_PIPELINE = (
     "rtspsrc location={rtsp_url} latency=0 protocols=tcp ! "
     "rtph264depay ! h264parse ! nvv4l2decoder ! "
+    "video/x-raw(memory:NVMM) ! "
     "nvvidconv ! "
+    "video/x-raw,format=BGRx,width=704,height=480 ! " # <-- Final, stable caps
     "appsink drop=1"
 )
 
