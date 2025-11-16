@@ -55,16 +55,13 @@ CAMERAS_AVAILABLE_TO_STREAM = {
 }
 
 # --- UPDATED GSTREAMER PIPELINE ---
-# Simplified pipeline for Jetson:
-# - Use protocols=tcp to avoid UDP packet loss issues
-# - Remove explicit format=BGR caps; let nvvidconv negotiate the format automatically
-# - appsink will receive the data in a format OpenCV can handle
+# Adding 'queue' element for stream stability.
 GSTREAMER_PIPELINE = (
     "rtspsrc location={rtsp_url} latency=0 protocols=tcp ! "
-    "rtph264depay ! h264parse ! nvv4l2decoder ! "
+    "rtph264depay ! h264parse ! queue ! nvv4l2decoder ! " # <-- ADDED queue
     "video/x-raw(memory:NVMM) ! "
     "nvvidconv ! "
-    "video/x-raw,format=BGRx,width=704,height=480 ! " # <-- Final, stable caps
+    "video/x-raw,format=BGRx,width=704,height=480 ! "
     "appsink drop=1"
 )
 
