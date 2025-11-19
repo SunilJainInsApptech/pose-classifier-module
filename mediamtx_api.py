@@ -159,6 +159,7 @@ if __name__ == '__main__':
     print(f"Starting MediaMTX API server")
     print(f"MediaMTX domain: {MEDIAMTX_DOMAIN}")
     print(f"Number of cameras: {len(CAMERAS)}")
-    print(f"API running on http://0.0.0.0:5001")
+    print(f"API running on http://127.0.0.1:5001 (localhost only - Nginx proxies public traffic)")
 
-    app.run(host='0.0.0.0', port=5001, debug=False)
+    # ✅ Bind to localhost only - Nginx handles all public traffic
+    app.run(host='127.0.0.1', port=5001, debug=False)
