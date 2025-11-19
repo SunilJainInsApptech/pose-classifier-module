@@ -51,20 +51,21 @@ hlsEncryption: no
 # WebRTC server for ultra-low latency streaming
 webrtc: yes
 webrtcAddress: :8889
-
-# Allow all origins (adjust for production security)
+webrtcEncryption: no  # Nginx handles TLS
+webrtcServerKey: server.key
+webrtcServerCert: server.crt
 webrtcAllowOrigin: "*"
 
-# ICE servers for NAT traversal
+# ICE servers for NAT traversal - use proper struct format
 webrtcICEServers2:
   - url: stun:stun.l.google.com:19302
 
-# Public IP for NAT traversal - REQUIRED for droplets behind NAT
-webrtcAdditionalHosts: [104.236.30.246]
+# CRITICAL: Set your droplet's public IP for ICE candidates
+webrtcICEHostNAT1To1IPs:
+  - 104.236.30.246
 
-# UDP port range for WebRTC media
-webrtcLocalUDPPort: 8189
-webrtcLocalTCPPort: 8189
+# UDP mux for WebRTC media
+webrtcICEUDPMuxAddress: :8189
 
 ###############################################
 # Path Defaults (for all camera streams)
