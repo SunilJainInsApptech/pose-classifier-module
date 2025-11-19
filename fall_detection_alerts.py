@@ -186,7 +186,7 @@ class FallDetectionAlerts:
         message += f"Camera: {camera_name}\n"
         # message += f"Person: {person_id}\n"
         message += f"Fall Confidence: {confidence:.1%}\n"
-        message += f"Time: {timestamp_str}\n"
+        message += f"Time: {timestamp.strftime('%Y-%m-%d %I:%M%p')}\n"
         
         if metadata:
             if 'probabilities' in metadata:
@@ -197,7 +197,7 @@ class FallDetectionAlerts:
         #       message += f"Sit:{probs.get('sitting', 0):.1%}\n"
         
         if image_path:
-            message += f"Image: {os.path.basename(image_path)}\n"
+            message += f"View camera: https://rigguardian.com/cameras\n"
         message += "\nPlease check the location immediately."
         
         return message
