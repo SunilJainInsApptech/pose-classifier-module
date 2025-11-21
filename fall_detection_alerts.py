@@ -183,6 +183,7 @@ class FallDetectionAlerts:
         timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
         
         message = f"🚨 FALL DETECTED 🚨\n"
+        message += f"Location: 55CPW\n"  # Added location
         message += f"Camera: {camera_name}\n"
         # message += f"Person: {person_id}\n"
         message += f"Fall Confidence: {confidence:.1%}\n"
@@ -325,11 +326,11 @@ class FallDetectionAlerts:
                 "alert_type": alert_type,
                 "camera_name": camera_name,
                 "person_id": str(person_id),
-                "location": f"Camera {camera_name}",
+                "location": "55CPW",  # Added location
                 "confidence": confidence,
                 "severity": "critical",
                 "title": "Fall Alert Detected",
-                "message": f"Fall detected on {camera_name} with {confidence:.1%} confidence",
+                "message": f"Fall detected at 55CPW on {camera_name} with {confidence:.1%} confidence",  # Updated message
                 "requires_immediate_attention": True,
                 "notification_type": "fall_detection",
                 "timestamp": timestamp.isoformat(),
@@ -362,9 +363,9 @@ class FallDetectionAlerts:
                 "person_id": str(person_id),
                 "confidence": confidence,
                 "severity": "critical",
-                "location": camera_name,
+                "location": "55CPW",  # Added location
                 "title": "🚨 Fall Alert - Immediate Action Required",
-                "message": f"Fall detected on {camera_name} with {confidence:.1%} confidence",
+                "message": f"Fall detected at 55CPW on {camera_name} with {confidence:.1%} confidence",  # Updated message
                 "requires_immediate_attention": True,
                 "notification_type": "web_push"
             }
@@ -378,9 +379,9 @@ class FallDetectionAlerts:
                 "person_id": str(person_id),
                 "confidence": confidence,
                 "severity": "critical",
-                "location": camera_name,
+                "location": "55CPW",  # Added location
                 "title": "Fall Alert",
-                "message": "Fall detected",
+                "message": "Fall detected at 55CPW",  # Updated message
                 "requires_immediate_attention": True,
                 "notification_type": "web_push"
             }
