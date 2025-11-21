@@ -62,7 +62,7 @@ ALERT_CONFIG = {
     'twilio_auth_token': os.environ.get('TWILIO_AUTH_TOKEN'),
     'twilio_from_phone': os.environ.get('TWILIO_FROM_PHONE'),
     'twilio_to_phones': os.environ.get('TWILIO_TO_PHONES', '+19738652226'),
-    'fall_confidence_threshold': float(os.environ.get('FALL_CONFIDENCE_THRESHOLD', '0.7')),
+    'fall_confidence_threshold': float(os.environ.get('FALL_CONFIDENCE_THRESHOLD', '0.9')),
     'alert_cooldown_seconds': int(os.environ.get('ALERT_COOLDOWN_SECONDS', '1200')),
     'twilio_notify_service_sid': os.environ.get('TWILIO_NOTIFY_SERVICE_SID'),
     'rigguardian_webhook_url': os.environ.get('RIGGUARDIAN_WEBHOOK_URL', 'https://building-sensor-platform-production.up.railway.app/webhook/fall-alert')
