@@ -160,12 +160,14 @@ async def run_roboflow_inference(image: np.ndarray) -> Dict:
         LOGGER.error(f"Error during Roboflow inference (HTTP): {e}")
         return {"predictions": []}
 
-def process_roboflow_results(results: Dict, confidence_threshold: float = 0.5) -> List[Dict]:
+def process_roboflow_results(results: Dict, img_width: int, img_height: int, confidence_threshold: float = 0.5) -> List[Dict]:
     """
-    Process Roboflow detection results.
+    Process Roboflow detection results with boundary exclusion.
     
     Args:
         results: Raw results from Roboflow inference
+        img_width: Width of the source image
+        img_height: Height of the source image
         confidence_threshold: Minimum confidence for detections
         
     Returns:
@@ -173,10 +175,32 @@ def process_roboflow_results(results: Dict, confidence_threshold: float = 0.5) -
     """
     detections = []
     
+    # Exclusion zone configuration (10%)
+    MARGIN_PCT = 0.10
+    left_boundary = img_width * MARGIN_PCT
+    right_boundary = img_width * (1.0 - MARGIN_PCT)
+    bottom_boundary = img_height * (1.0 - MARGIN_PCT)
+
     for pred in results.get("predictions", []):
         confidence = pred.get("confidence", 0.0)
         
         if confidence < confidence_threshold:
+            continue
+
+        # Get center coordinates
+        x = pred.get("x", 0)
+        y = pred.get("y", 0)
+
+        # Check Exclusion Zones
+        # If center of box is too far left, too far right, or too low
+        if x < left_boundary:
+            LOGGER.info(f"Skipping detection (Left Boundary): x={x:.1f} < {left_boundary:.1f}")
+            continue
+        if x > right_boundary:
+            LOGGER.info(f"Skipping detection (Right Boundary): x={x:.1f} > {right_boundary:.1f}")
+            continue
+        if y > bottom_boundary:
+            LOGGER.info(f"Skipping detection (Bottom Boundary): y={y:.1f} > {bottom_boundary:.1f}")
             continue
             
         detection = {
@@ -312,14 +336,17 @@ async def process_camera(camera_name: str):
         
         LOGGER.info(f"Captured image from camera: {camera_name} | Shape: {image.shape}")
         
+        # Get dimensions for boundary checking
+        height, width = image.shape[:2]
+
         # Convert to ViamImage for alert functions
         viam_img = numpy_to_viam_image(image)
 
         # Run Roboflow inference
         results = await run_roboflow_inference(image)
         
-        # Process results
-        detections = process_roboflow_results(results, confidence_threshold=0.6)
+        # Process results (Pass width and height now)
+        detections = process_roboflow_results(results, width, height, confidence_threshold=0.6)
         
         # Log results
         LOGGER.info(f"Processed {len(detections)} detections from {camera_name}")
