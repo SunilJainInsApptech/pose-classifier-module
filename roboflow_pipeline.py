@@ -39,7 +39,7 @@ LOGGER = logging.getLogger(__name__)
 ROBOFLOW_API_KEY = os.environ.get("ROBOFLOW_API_KEY")
 if not ROBOFLOW_API_KEY:
     raise SystemExit("ROBOFLOW_API_KEY not set. export ROBOFLOW_API_KEY=<key> and retry.")
-ROBOFLOW_MODEL_ID = os.environ.get("ROBOFLOW_MODEL_ID", "fall-detection-yg1ru/3")
+ROBOFLOW_MODEL_ID = os.environ.get("ROBOFLOW_MODEL_ID", "fall-detection-yg1ru/5")
 INFERENCE_SERVER_URL = os.environ.get("INFERENCE_SERVER_URL", "http://localhost:9001")  # Default Roboflow inference server
 
 # NEW: Address of the capture service running on the Jetson
@@ -62,7 +62,7 @@ ALERT_CONFIG = {
     'twilio_auth_token': os.environ.get('TWILIO_AUTH_TOKEN'),
     'twilio_from_phone': os.environ.get('TWILIO_FROM_PHONE'),
     'twilio_to_phones': os.environ.get('TWILIO_TO_PHONES', '+19738652226'),
-    'fall_confidence_threshold': float(os.environ.get('FALL_CONFIDENCE_THRESHOLD', '0.9')),
+    'fall_confidence_threshold': float(os.environ.get('FALL_CONFIDENCE_THRESHOLD', '0.85')),
     'alert_cooldown_seconds': int(os.environ.get('ALERT_COOLDOWN_SECONDS', '1200')),
     'twilio_notify_service_sid': os.environ.get('TWILIO_NOTIFY_SERVICE_SID'),
     'rigguardian_webhook_url': os.environ.get('RIGGUARDIAN_WEBHOOK_URL', 'https://building-sensor-platform-production.up.railway.app/webhook/fall-alert')
