@@ -56,13 +56,16 @@ CAMERAS_AVAILABLE_TO_STREAM = {
 
 # --- UPDATED GSTREAMER PIPELINE ---
 # Adding 'queue' element for stream stability.
+# UPDATED: Increased latency to 200ms to fix 'cannot query video width/height' errors
+# UPDATED: Added enable-max-performance=1 for better decoding
+# UPDATED: Added sync=false to appsink to prevent clock sync issues
 GSTREAMER_PIPELINE = (
-    "rtspsrc location={rtsp_url} latency=0 protocols=tcp ! "
-    "rtph264depay ! h264parse ! queue ! nvv4l2decoder ! " # <-- ADDED queue
+    "rtspsrc location={rtsp_url} latency=200 protocols=tcp ! "
+    "rtph264depay ! h264parse ! queue ! nvv4l2decoder enable-max-performance=1 ! " 
     "video/x-raw(memory:NVMM) ! "
     "nvvidconv ! "
     "video/x-raw,format=BGRx,width=704,height=480 ! "
-    "appsink drop=1"
+    "appsink drop=1 sync=false"
 )
 
 # --- OpenCV Capture Logic ---
