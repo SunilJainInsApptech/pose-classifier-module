@@ -60,7 +60,6 @@ CAMERAS_AVAILABLE_TO_STREAM = {
 # UPDATED: Increased latency to 500ms for better stability over WiFi/Network
 # UPDATED: Added enable-max-performance=1 for better decoding
 # UPDATED: Added sync=false to appsink to prevent clock sync issues
-# UPDATED: Added 'application/x-rtp,media=video' to explicitly ignore audio streams
 GSTREAMER_PIPELINE = (
     "rtspsrc location={rtsp_url} latency=500 protocols=tcp ! "
     "application/x-rtp,media=video ! "
@@ -201,4 +200,19 @@ async def get_frame(camera_name: str):
     """Endpoint to capture a frame from a specific camera."""
     LOGGER.info(f"Request received for camera: {camera_name}")
     
-    # Run the synchronous capture
+    # Run the synchronous capture function in a thread to avoid blocking
+    frame = await asyncio.to_thread(capture_rtsp_frame_sync, camera_name)
+    
+    if frame is None:
+        raise HTTPException(status_code=404, detail=f"Could not capture frame from {camera_name}")
+
+    is_success, buffer = cv2.imencode(".jpg", frame)
+    if not is_success:
+        raise HTTPException(status_code=500, detail="Failed to encode frame to JPEG")
+
+    return Response(content=buffer.tobytes(), media_type="image/jpeg")
+
+if __name__ == "__main__":
+    import uvicorn
+    # Run on all available network interfaces on port 8001
+    uvicorn.run(app, host="0.0.0.0", port=8001)
