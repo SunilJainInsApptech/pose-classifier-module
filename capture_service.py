@@ -5,6 +5,7 @@ import atexit
 from contextlib import asynccontextmanager
 import os
 from datetime import datetime
+import threading  # <--- ADDED THIS
 
 import cv2
 import numpy as np
@@ -56,11 +57,13 @@ CAMERAS_AVAILABLE_TO_STREAM = {
 
 # --- UPDATED GSTREAMER PIPELINE ---
 # Adding 'queue' element for stream stability.
-# UPDATED: Increased latency to 200ms to fix 'cannot query video width/height' errors
+# UPDATED: Increased latency to 500ms for better stability over WiFi/Network
 # UPDATED: Added enable-max-performance=1 for better decoding
 # UPDATED: Added sync=false to appsink to prevent clock sync issues
+# UPDATED: Added 'application/x-rtp,media=video' to explicitly ignore audio streams
 GSTREAMER_PIPELINE = (
-    "rtspsrc location={rtsp_url} latency=200 protocols=tcp ! "
+    "rtspsrc location={rtsp_url} latency=500 protocols=tcp ! "
+    "application/x-rtp,media=video ! "
     "rtph264depay ! h264parse ! queue ! nvv4l2decoder enable-max-performance=1 ! " 
     "video/x-raw(memory:NVMM) ! "
     "nvvidconv ! "
@@ -70,6 +73,7 @@ GSTREAMER_PIPELINE = (
 
 # --- OpenCV Capture Logic ---
 _caps: Dict[str, cv2.VideoCapture] = {}
+_init_lock = threading.Lock()  # <--- ADDED GLOBAL LOCK
 
 # --- Add this shutdown function ---
 def _shutdown_captures():
@@ -99,18 +103,37 @@ def capture_rtsp_frame_sync(stream_name: str) -> Optional[np.ndarray]:
         return None
 
     stream_url = RTSP_STREAMS[stream_name]
-    cap = _caps.get(stream_name)
+    
+    # Use a lock during initialization to prevent crashing the NVDEC driver
+    # by trying to open multiple hardware decoders at the exact same millisecond.
+    with _init_lock:
+        cap = _caps.get(stream_name)
 
-    if cap is None or not cap.isOpened():
-        LOGGER.warning(f"[Capture] No existing capture for {stream_name} or it's closed. Opening new one.")
-        pipeline = GSTREAMER_PIPELINE.format(rtsp_url=stream_url)
-        cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-        if not cap.isOpened():
-            LOGGER.error(f"[Capture] FATAL: GStreamer pipeline failed to open for {stream_name}.")
-            if stream_name in _caps:
-                del _caps[stream_name]
-            return None
-        _caps[stream_name] = cap
+        if cap is None or not cap.isOpened():
+            LOGGER.warning(f"[Capture] No existing capture for {stream_name} or it's closed. Opening new one.")
+            pipeline = GSTREAMER_PIPELINE.format(rtsp_url=stream_url)
+            cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+            
+            if not cap.isOpened():
+                LOGGER.error(f"[Capture] FATAL: GStreamer pipeline failed to open for {stream_name}.")
+                if stream_name in _caps:
+                    del _caps[stream_name]
+                return None
+            
+            # WARMUP LOOP: Critical for GStreamer on Jetson
+            # Read a few frames to flush the pipeline and let the auto-exposure/decoder settle
+            LOGGER.info(f"[Capture] Warming up pipeline for {stream_name}...")
+            for i in range(5):
+                cap.read()
+                
+            _caps[stream_name] = cap
+            LOGGER.info(f"[Capture] Pipeline initialized and warmed up for {stream_name}")
+
+    # Now read the actual frame
+    # We use the cap object we just retrieved or created
+    cap = _caps.get(stream_name)
+    if cap is None:
+        return None
 
     ret, frame = cap.read()
     if not ret:
@@ -178,19 +201,4 @@ async def get_frame(camera_name: str):
     """Endpoint to capture a frame from a specific camera."""
     LOGGER.info(f"Request received for camera: {camera_name}")
     
-    # Run the synchronous capture function in a thread to avoid blocking
-    frame = await asyncio.to_thread(capture_rtsp_frame_sync, camera_name)
-    
-    if frame is None:
-        raise HTTPException(status_code=404, detail=f"Could not capture frame from {camera_name}")
-
-    is_success, buffer = cv2.imencode(".jpg", frame)
-    if not is_success:
-        raise HTTPException(status_code=500, detail="Failed to encode frame to JPEG")
-
-    return Response(content=buffer.tobytes(), media_type="image/jpeg")
-
-if __name__ == "__main__":
-    import uvicorn
-    # Run on all available network interfaces on port 8001
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    # Run the synchronous capture
