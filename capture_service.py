@@ -56,15 +56,14 @@ CAMERAS_AVAILABLE_TO_STREAM = {
 }
 
 # --- UPDATED GSTREAMER PIPELINE ---
-# Adding 'queue' element for stream stability.
-# UPDATED: Increased latency to 500ms for better stability over WiFi/Network
-# UPDATED: Added enable-max-performance=1 for better decoding
-# UPDATED: Added sync=false to appsink to prevent clock sync issues
+# Switched to 'decodebin' for maximum robustness.
+# It automatically handles:
+# 1. H.264 vs H.265 codec detection (some cameras might be H.265)
+# 2. Audio/Video stream splitting (connects only video to nvvidconv)
+# 3. Hardware acceleration (uses nvv4l2decoder if available)
 GSTREAMER_PIPELINE = (
-    "rtspsrc location={rtsp_url} latency=500 protocols=tcp ! "
-    "application/x-rtp,media=video ! "
-    "rtph264depay ! h264parse ! queue ! nvv4l2decoder enable-max-performance=1 ! " 
-    "video/x-raw(memory:NVMM) ! "
+    "rtspsrc location={rtsp_url} latency=500 protocols=tcp drop-on-latency=true ! "
+    "decodebin ! "
     "nvvidconv ! "
     "video/x-raw,format=BGRx,width=704,height=480 ! "
     "appsink drop=1 sync=false"
@@ -120,13 +119,16 @@ def capture_rtsp_frame_sync(stream_name: str) -> Optional[np.ndarray]:
                 return None
             
             # WARMUP LOOP: Critical for GStreamer on Jetson
-            # Read a few frames to flush the pipeline and let the auto-exposure/decoder settle
+            # We read a few frames to let the pipeline settle.
             LOGGER.info(f"[Capture] Warming up pipeline for {stream_name}...")
-            for i in range(5):
-                cap.read()
+            try:
+                for i in range(3):
+                    cap.read()
+            except Exception as e:
+                LOGGER.warning(f"[Capture] Warmup warning for {stream_name}: {e}")
                 
             _caps[stream_name] = cap
-            LOGGER.info(f"[Capture] Pipeline initialized and warmed up for {stream_name}")
+            LOGGER.info(f"[Capture] Pipeline initialized for {stream_name}")
 
     # Now read the actual frame
     # We use the cap object we just retrieved or created
