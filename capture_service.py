@@ -118,17 +118,37 @@ def capture_rtsp_frame_sync(stream_name: str) -> Optional[np.ndarray]:
                     del _caps[stream_name]
                 return None
             
-            # WARMUP LOOP: Critical for GStreamer on Jetson
-            # We read a few frames to let the pipeline settle.
+            # WARMUP LOOP with timeout protection
+            # Some cameras take 5-10 seconds to send the first keyframe.
+            # We try to read frames but don't block forever.
             LOGGER.info(f"[Capture] Warming up pipeline for {stream_name}...")
-            try:
-                for i in range(3):
-                    cap.read()
-            except Exception as e:
-                LOGGER.warning(f"[Capture] Warmup warning for {stream_name}: {e}")
+            import time
+            warmup_start = time.time()
+            warmup_timeout = 15  # seconds
+            warmup_frames = 0
+            
+            while time.time() - warmup_start < warmup_timeout and warmup_frames < 5:
+                try:
+                    ret, _ = cap.read()
+                    if ret:
+                        warmup_frames += 1
+                        LOGGER.info(f"[Capture] Warmup frame {warmup_frames}/5 received for {stream_name}")
+                    else:
+                        # Frame not ready yet, wait a bit
+                        time.sleep(0.2)
+                except Exception as e:
+                    LOGGER.warning(f"[Capture] Warmup error for {stream_name}: {e}")
+                    break
+            
+            if warmup_frames == 0:
+                LOGGER.error(f"[Capture] Warmup failed for {stream_name} - no frames received after {warmup_timeout}s")
+                cap.release()
+                if stream_name in _caps:
+                    del _caps[stream_name]
+                return None
                 
             _caps[stream_name] = cap
-            LOGGER.info(f"[Capture] Pipeline initialized for {stream_name}")
+            LOGGER.info(f"[Capture] Pipeline initialized for {stream_name} ({warmup_frames} warmup frames)")
 
     # Now read the actual frame
     # We use the cap object we just retrieved or created
