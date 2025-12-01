@@ -5,7 +5,13 @@ import atexit
 from contextlib import asynccontextmanager
 import os
 from datetime import datetime
-import threading  # <--- ADDED THIS
+import threading
+
+# --- ENHANCED DEBUGGING ---
+# Set GStreamer debug level if not already set in environment.
+# Level 2 = Warnings/Errors, Level 3 = Info (useful for pipeline setup)
+if "GST_DEBUG" not in os.environ:
+    os.environ["GST_DEBUG"] = "3"
 
 import cv2
 import numpy as np
@@ -16,6 +22,10 @@ from fastapi.middleware.cors import CORSMiddleware
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 LOGGER = logging.getLogger(__name__)
+
+# Log OpenCV Build Information on Startup
+LOGGER.info(f"OpenCV Version: {cv2.__version__}")
+LOGGER.info(f"OpenCV Build Info: {cv2.getBuildInformation()}")
 
 # --- Configuration (Should match your main script) ---
 # Use the literal '&' character - GStreamer/OpenCV handle it correctly when it's in the URL string
@@ -55,23 +65,33 @@ CAMERAS_AVAILABLE_TO_STREAM = {
 	'Courtyard_2': 'rtsp://192.168.1.200:554/chID=30&streamType=sub',
 }
 
-# --- UPDATED GSTREAMER PIPELINE ---
-# Switched to 'decodebin' for maximum robustness.
-# It automatically handles:
-# 1. H.264 vs H.265 codec detection (some cameras might be H.265)
-# 2. Audio/Video stream splitting (connects only video to nvvidconv)
-# 3. Hardware acceleration (uses nvv4l2decoder if available)
-GSTREAMER_PIPELINE = (
-    "rtspsrc location={rtsp_url} latency=500 protocols=tcp name=src ! "
-    "src. ! rtpjitterbuffer ! application/x-rtp,media=video,encoding-name=H265 ! "
-    "rtph265depay ! h265parse ! nvv4l2decoder ! nvvidconv ! "
-    "video/x-raw,format=BGRx,width=704,height=480 ! videoconvert ! "
-    "video/x-raw,format=BGR ! appsink drop=1 sync=false"
-)
+# --- UPDATED GSTREAMER PIPELINE LOGIC ---
+def _gst_candidate_pipelines(rtsp_url: str):
+    """
+    Returns ordered list of pipelines.
+    """
+    # FIXED: Removed 'name=src src. !' which causes "Internal data stream error" in OpenCV.
+    # Added 'max-buffers=1' to ensure low latency.
+    hw_h265 = (
+        f'rtspsrc location="{rtsp_url}" latency=500 protocols=tcp ! '
+        'rtpjitterbuffer ! application/x-rtp,media=video,encoding-name=H265 ! '
+        'rtph265depay ! h265parse ! nvv4l2decoder ! nvvidconv ! '
+        'video/x-raw,format=BGRx,width=704,height=480 ! videoconvert ! '
+        'video/x-raw,format=BGR ! appsink drop=1 sync=false max-buffers=1'
+    )
+    
+    generic = (
+        f'rtspsrc location="{rtsp_url}" latency=500 protocols=tcp ! '
+        'rtpjitterbuffer ! decodebin ! nvvidconv ! '
+        'video/x-raw,format=BGRx,width=704,height=480 ! videoconvert ! '
+        'video/x-raw,format=BGR ! appsink drop=1 sync=false max-buffers=1'
+    )
+    
+    return [hw_h265, generic]
 
 # --- OpenCV Capture Logic ---
 _caps: Dict[str, cv2.VideoCapture] = {}
-_init_lock = threading.Lock()  # <--- ADDED GLOBAL LOCK
+_init_lock = threading.Lock()
 
 # --- Add this shutdown function ---
 def _shutdown_captures():
@@ -102,25 +122,45 @@ def capture_rtsp_frame_sync(stream_name: str) -> Optional[np.ndarray]:
 
     stream_url = RTSP_STREAMS[stream_name]
     
-    # Use a lock during initialization to prevent crashing the NVDEC driver
-    # by trying to open multiple hardware decoders at the exact same millisecond.
-    with _init_lock:
-        cap = _caps.get(stream_name)
-
-        if cap is None or not cap.isOpened():
-            LOGGER.warning(f"[Capture] No existing capture for {stream_name} or it's closed. Opening new one.")
-            pipeline = GSTREAMER_PIPELINE.format(rtsp_url=stream_url)
-            cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-            
-            if not cap.isOpened():
-                LOGGER.error(f"[Capture] FATAL: GStreamer pipeline failed to open for {stream_name}.")
-                if stream_name in _caps:
-                    del _caps[stream_name]
-                return None
-            
-            # WARMUP LOOP with timeout protection
-            # Some cameras take 5-10 seconds to send the first keyframe.
-            # We try to read frames but don't block forever.
+    # Check if we already have a working capture
+    cap = _caps.get(stream_name)
+    
+    # If not, initialize it. 
+    # We use a lock ONLY for the driver-critical creation step.
+    if cap is None or not cap.isOpened():
+        new_cap = None
+        needs_warmup = False
+        
+        with _init_lock:
+            # Double-check inside lock
+            cap = _caps.get(stream_name)
+            if cap is None or not cap.isOpened():
+                LOGGER.warning(f"[Capture] No existing capture for {stream_name}. Opening new one.")
+                
+                for i, pipeline in enumerate(_gst_candidate_pipelines(stream_url)):
+                    LOGGER.info(f"[Capture] Trying pipeline #{i+1}: {pipeline}")
+                    try:
+                        # Redirect stderr to capture GStreamer output if possible, 
+                        # though GST_DEBUG usually goes to stderr automatically.
+                        cap_try = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+                        
+                        if cap_try.isOpened():
+                            new_cap = cap_try
+                            needs_warmup = True
+                            LOGGER.info(f"[Capture] Pipeline #{i+1} opened successfully.")
+                            break
+                        else:
+                            LOGGER.warning(f"[Capture] Pipeline #{i+1} failed to open (isOpened() returned False).")
+                    except Exception as e:
+                        LOGGER.error(f"[Capture] Exception opening pipeline #{i+1}: {e}", exc_info=True)
+                
+                if new_cap:
+                    _caps[stream_name] = new_cap
+                    cap = new_cap
+        
+        # WARMUP LOOP - OUTSIDE THE LOCK
+        # This allows multiple cameras to warmup in parallel.
+        if needs_warmup and cap:
             LOGGER.info(f"[Capture] Warming up pipeline for {stream_name}...")
             import time
             warmup_start = time.time()
@@ -132,26 +172,23 @@ def capture_rtsp_frame_sync(stream_name: str) -> Optional[np.ndarray]:
                     ret, _ = cap.read()
                     if ret:
                         warmup_frames += 1
-                        LOGGER.info(f"[Capture] Warmup frame {warmup_frames}/5 received for {stream_name}")
                     else:
-                        # Frame not ready yet, wait a bit
-                        time.sleep(0.2)
+                        time.sleep(0.1)
                 except Exception as e:
                     LOGGER.warning(f"[Capture] Warmup error for {stream_name}: {e}")
                     break
             
             if warmup_frames == 0:
-                LOGGER.error(f"[Capture] Warmup failed for {stream_name} - no frames received after {warmup_timeout}s")
+                LOGGER.error(f"[Capture] Warmup failed for {stream_name}")
+                with _init_lock:
+                    if _caps.get(stream_name) == cap:
+                        del _caps[stream_name]
                 cap.release()
-                if stream_name in _caps:
-                    del _caps[stream_name]
                 return None
-                
-            _caps[stream_name] = cap
+            
             LOGGER.info(f"[Capture] Pipeline initialized for {stream_name} ({warmup_frames} warmup frames)")
 
     # Now read the actual frame
-    # We use the cap object we just retrieved or created
     cap = _caps.get(stream_name)
     if cap is None:
         return None
@@ -159,9 +196,10 @@ def capture_rtsp_frame_sync(stream_name: str) -> Optional[np.ndarray]:
     ret, frame = cap.read()
     if not ret:
         LOGGER.warning(f"[Capture] cap.read() failed for {stream_name}. Releasing capture object.")
+        with _init_lock:
+            if _caps.get(stream_name) == cap:
+                del _caps[stream_name]
         cap.release()
-        if stream_name in _caps:
-            del _caps[stream_name]
         return None
     
     # --- MORE LOGGING ---
