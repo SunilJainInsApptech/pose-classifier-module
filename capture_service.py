@@ -55,32 +55,19 @@ CAMERAS_AVAILABLE_TO_STREAM = {
 	'Courtyard_2': 'rtsp://192.168.1.200:554/chID=30&streamType=sub',
 }
 
-# --- UPDATED GSTREAMER PIPELINE LOGIC ---
-def _gst_candidate_pipelines(rtsp_url: str):
-    """
-    Returns a list of pipelines to try.
-    1. Specific Hardware H.265 (Matches your working gst-launch command)
-    2. Generic Decodebin (Fallback for H.264 or other formats)
-    """
-    # Matches: gst-launch-1.0 rtspsrc ... ! rtpjitterbuffer ! ... H265 ... ! nvv4l2decoder ...
-    # Note: Removed drop-on-latency=true to match your working command.
-    hw_h265 = (
-        f'rtspsrc location="{rtsp_url}" latency=500 protocols=tcp name=src '
-        'src. ! rtpjitterbuffer ! application/x-rtp,media=video,encoding-name=H265 ! '
-        'rtph265depay ! h265parse ! nvv4l2decoder ! nvvidconv ! '
-        'video/x-raw,format=BGRx,width=704,height=480 ! videoconvert ! '
-        'video/x-raw,format=BGR ! appsink drop=1 sync=false'
-    )
-    
-    # Fallback: Generic decodebin (useful if a camera is H.264)
-    generic = (
-        f'rtspsrc location="{rtsp_url}" latency=500 protocols=tcp drop-on-latency=true ! '
-        'decodebin ! nvvidconv ! '
-        'video/x-raw,format=BGRx,width=704,height=480 ! videoconvert ! '
-        'video/x-raw,format=BGR ! appsink drop=1 sync=false'
-    )
-    
-    return [hw_h265, generic]
+# --- UPDATED GSTREAMER PIPELINE ---
+# Switched to 'decodebin' for maximum robustness.
+# It automatically handles:
+# 1. H.264 vs H.265 codec detection (some cameras might be H.265)
+# 2. Audio/Video stream splitting (connects only video to nvvidconv)
+# 3. Hardware acceleration (uses nvv4l2decoder if available)
+GSTREAMER_PIPELINE = (
+    "rtspsrc location={rtsp_url} latency=500 protocols=tcp name=src ! "
+    "src. ! rtpjitterbuffer ! application/x-rtp,media=video,encoding-name=H265 ! "
+    "rtph265depay ! h265parse ! nvv4l2decoder ! nvvidconv ! "
+    "video/x-raw,format=BGRx,width=704,height=480 ! videoconvert ! "
+    "video/x-raw,format=BGR ! appsink drop=1 sync=false"
+)
 
 # --- OpenCV Capture Logic ---
 _caps: Dict[str, cv2.VideoCapture] = {}
@@ -122,20 +109,11 @@ def capture_rtsp_frame_sync(stream_name: str) -> Optional[np.ndarray]:
 
         if cap is None or not cap.isOpened():
             LOGGER.warning(f"[Capture] No existing capture for {stream_name} or it's closed. Opening new one.")
+            pipeline = GSTREAMER_PIPELINE.format(rtsp_url=stream_url)
+            cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
             
-            # Iterate through candidate pipelines
-            for pipeline in _gst_candidate_pipelines(stream_url):
-                LOGGER.info(f"[Capture] Trying pipeline: {pipeline[:80]}...")
-                try:
-                    cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-                    if cap.isOpened():
-                        LOGGER.info(f"[Capture] Pipeline opened successfully.")
-                        break
-                except Exception as e:
-                    LOGGER.warning(f"[Capture] Pipeline failed: {e}")
-            
-            if cap is None or not cap.isOpened():
-                LOGGER.error(f"[Capture] FATAL: All GStreamer pipelines failed for {stream_name}.")
+            if not cap.isOpened():
+                LOGGER.error(f"[Capture] FATAL: GStreamer pipeline failed to open for {stream_name}.")
                 if stream_name in _caps:
                     del _caps[stream_name]
                 return None
@@ -244,4 +222,19 @@ async def get_frame(camera_name: str):
     """Endpoint to capture a frame from a specific camera."""
     LOGGER.info(f"Request received for camera: {camera_name}")
     
-    # Run the synchronous capture
+    # Run the synchronous capture function in a thread to avoid blocking
+    frame = await asyncio.to_thread(capture_rtsp_frame_sync, camera_name)
+    
+    if frame is None:
+        raise HTTPException(status_code=404, detail=f"Could not capture frame from {camera_name}")
+
+    is_success, buffer = cv2.imencode(".jpg", frame)
+    if not is_success:
+        raise HTTPException(status_code=500, detail="Failed to encode frame to JPEG")
+
+    return Response(content=buffer.tobytes(), media_type="image/jpeg")
+
+if __name__ == "__main__":
+    import uvicorn
+    # Run on all available network interfaces on port 8001
+    uvicorn.run(app, host="0.0.0.0", port=8001)
