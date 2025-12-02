@@ -39,7 +39,7 @@ LOGGER = logging.getLogger(__name__)
 ROBOFLOW_API_KEY = os.environ.get("ROBOFLOW_API_KEY")
 if not ROBOFLOW_API_KEY:
     raise SystemExit("ROBOFLOW_API_KEY not set. export ROBOFLOW_API_KEY=<key> and retry.")
-ROBOFLOW_MODEL_ID = os.environ.get("ROBOFLOW_MODEL_ID", "fall-detection-yg1ru/5")
+ROBOFLOW_MODEL_ID = os.environ.get("ROBOFLOW_MODEL_ID", "fall-detection-yg1ru/3")
 INFERENCE_SERVER_URL = os.environ.get("INFERENCE_SERVER_URL", "http://localhost:9001")  # Default Roboflow inference server
 
 # NEW: Address of the capture service running on the Jetson
