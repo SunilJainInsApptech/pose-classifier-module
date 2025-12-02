@@ -363,6 +363,15 @@ async def process_camera(camera_name: str):
                 
                 if service:
                     LOGGER.info(f"📤 Sending fall alert for camera {camera_name}")
+                    
+                    # --- DEBUGGING BLOCK START ---
+                    # Access internal state of the service to see what it actually has
+                    LOGGER.info(f"DEBUG: Alert Service State:")
+                    LOGGER.info(f"  - Account SID: {'***' if service.account_sid else 'MISSING'}")
+                    LOGGER.info(f"  - From Phone: {service.from_phone}")
+                    LOGGER.info(f"  - To Phones (Active): {service.to_phones}")
+                    # --- DEBUGGING BLOCK END ---
+
                     try:
                         await service.send_fall_alert(
                             camera_name=camera_name,
